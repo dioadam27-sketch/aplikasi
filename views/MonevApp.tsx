@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Plus, Save, BarChart3, CheckCircle, Lock, Calendar, Users, List, PieChart, AlignLeft, CheckSquare, Trash2, ArrowRight, User, LogOut } from 'lucide-react';
+import { ArrowLeft, Plus, Save, BarChart3, CheckCircle, Lock, Calendar, Users, List, PieChart, AlignLeft, CheckSquare, Trash2, ArrowRight, User, LogOut, X, AlertCircle, Power, Loader2, Building2, GripVertical, Circle, Square, ChevronUp } from 'lucide-react';
 import { Lecturer } from '../types';
 
 interface MonevAppProps {
@@ -26,10 +26,14 @@ interface Survey {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  hasResponded?: boolean;
 }
 
 // --- API URL ---
 const API_URL = 'https://pkkii.pendidikan.unair.ac.id/aplikasi/aplikasiapi.php';
+
+// --- CHART COLORS ---
+const CHART_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
 
 const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   const [view, setView] = useState<'login' | 'dashboard_lecturer' | 'fill_survey' | 'dashboard_admin' | 'create_survey' | 'view_results'>('login');
@@ -42,6 +46,11 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   const [currentUser, setCurrentUser] = useState<Lecturer | null>(null);
   const [lecturers, setLecturers] = useState<Lecturer[]>([]); // For Admin Whitelist
 
+  // Verification State (New)
+  const [isVerified, setIsVerified] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifiedData, setVerifiedData] = useState<{name: string, faculty: string} | null>(null);
+
   // Data State
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [activeSurvey, setActiveSurvey] = useState<Survey | null>(null);
@@ -49,26 +58,40 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [surveyResults, setSurveyResults] = useState<any>(null);
 
+  // Notification State
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
   // Creator State
   const [newSurvey, setNewSurvey] = useState<Partial<Survey>>({ title: '', description: '', startDate: '', endDate: '' });
   const [newQuestions, setNewQuestions] = useState<Question[]>([]);
   const [selectedNips, setSelectedNips] = useState<Set<string>>(new Set());
+
+  // Delete State
+  const [surveyToDelete, setSurveyToDelete] = useState<Survey | null>(null);
+
+  // Detail View State
+  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
 
   // --- FETCH HELPERS ---
   const fetchLecturers = async () => {
     try {
       const res = await fetch(`${API_URL}?action=fetch_all_simpdb`);
       const data = await res.json();
-      setLecturers(Array.isArray(data.lecturers) ? data.lecturers : []);
+      const list = Array.isArray(data.lecturers) ? data.lecturers : [];
+      setLecturers(list);
+      return list; // Return for chaining
     } catch (e) { 
         console.error("Error fetching lecturers:", e);
         setLecturers([]);
+        return [];
     }
   };
 
   const fetchSurveys = async (adminMode = false) => {
     try {
-      const res = await fetch(`${API_URL}?action=monev_surveys&nip=${nip}&admin=${adminMode}`);
+      // Pastikan NIP bersih dari spasi untuk query yang akurat
+      const cleanNip = nip.trim(); 
+      const res = await fetch(`${API_URL}?action=monev_surveys&nip=${cleanNip}&admin=${adminMode}`);
       const data = await res.json();
       // Ensure data is an array
       if (Array.isArray(data)) {
@@ -102,11 +125,48 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     try {
       const res = await fetch(`${API_URL}?action=monev_results&surveyId=${surveyId}`);
       const data = await res.json();
-      setSurveyResults(data);
-    } catch (e) { console.error(e); }
+      if (data && data.results) {
+          setSurveyResults(data);
+      } else {
+          // Handle error response or empty data safely
+          setSurveyResults({ totalRespondents: 0, results: [] });
+      }
+    } catch (e) { 
+        console.error(e);
+        setSurveyResults({ totalRespondents: 0, results: [] });
+    }
   };
 
   // --- HANDLERS ---
+
+  const handleVerifyNip = async () => {
+      if (!nip.trim()) {
+          setNotification({ message: "Masukkan NIP terlebih dahulu.", type: 'error' });
+          setTimeout(() => setNotification(null), 2000);
+          return;
+      }
+
+      setIsVerifying(true);
+      // Fetch latest data to verify
+      const list = await fetchLecturers();
+      const found = list.find((l: any) => String(l.nip).trim() === nip.trim());
+      
+      setIsVerifying(false);
+      
+      if (found) {
+          setIsVerified(true);
+          setVerifiedData({
+              name: found.name,
+              faculty: found.expertise || '-' // Menggunakan kolom expertise sebagai Fakultas
+          });
+          setNotification({ message: "Data ditemukan.", type: 'success' });
+      } else {
+          setIsVerified(false);
+          setVerifiedData(null);
+          setNotification({ message: "NIP tidak ditemukan.", type: 'error' });
+      }
+      setTimeout(() => setNotification(null), 2000);
+  };
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,16 +181,14 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
             alert("Password admin salah.");
         }
     } else {
-        if (!nip.trim()) {
-            alert("Silakan masukkan NIP.");
+        if (!isVerified) {
+            handleVerifyNip();
             return;
         }
-        // Lecturer Login Logic
-        fetchLecturers().then(() => {
-            setIsAdmin(false);
-            fetchSurveys(false);
-            setView('dashboard_lecturer');
-        });
+        // Lecturer Login Logic - Proceed directly since verified
+        setIsAdmin(false);
+        fetchSurveys(false);
+        setView('dashboard_lecturer');
     }
   };
 
@@ -143,24 +201,104 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
 
   const submitSurvey = async () => {
     if (!activeSurvey) return;
-    // Validate required?
+    
+    // Validate required fields (optional, but good UX)
+    const unanswered = questions.filter(q => !answers[q.id]);
+    if (unanswered.length > 0) {
+        setNotification({ message: `Mohon lengkapi semua pertanyaan (${unanswered.length} belum diisi).`, type: 'error' });
+        setTimeout(() => setNotification(null), 3000);
+        return;
+    }
+
     const payload = {
         surveyId: activeSurvey.id,
-        nip: nip,
+        nip: nip.trim(), // Pastikan NIP bersih
         answers: Object.keys(answers).map(qid => ({ questionId: qid, value: answers[qid] }))
     };
 
-    const res = await fetch(`${API_URL}?table=monev&action=monev_submit`, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-    });
-    const result = await res.json();
-    if (result.status === 'success') {
-        alert("Terima kasih! Kuesioner berhasil dikirim.");
-        setView('dashboard_lecturer');
-    } else {
-        alert(result.message);
+    try {
+        const res = await fetch(`${API_URL}?table=monev&action=monev_submit`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        
+        if (result.status === 'success') {
+            setNotification({ message: 'Kuesioner berhasil dikirim! Terima kasih atas partisipasi Anda.', type: 'success' });
+            // Fetch surveys again to update "Sudah Diisi" status
+            await fetchSurveys(false);
+            setTimeout(() => {
+                setNotification(null);
+                setView('dashboard_lecturer');
+            }, 2000);
+        } else {
+            setNotification({ message: result.message || 'Terjadi kesalahan.', type: 'error' });
+            setTimeout(() => setNotification(null), 3000);
+        }
+    } catch (e) {
+        setNotification({ message: 'Gagal menghubungi server.', type: 'error' });
+        setTimeout(() => setNotification(null), 3000);
     }
+  };
+
+  // --- ADMIN HANDLERS (DELETE & STATUS) ---
+  const handleToggleStatus = async (survey: Survey) => {
+      const newStatus = !survey.isActive;
+      // Optimistic update
+      setSurveys(prev => prev.map(s => s.id === survey.id ? { ...s, isActive: newStatus } : s));
+
+      try {
+          // Use generic update endpoint
+          const res = await fetch(`${API_URL}?table=monev_surveys&action=update`, {
+              method: 'POST',
+              body: JSON.stringify({
+                  table: 'monev_surveys',
+                  data: {
+                      id: survey.id,
+                      isActive: newStatus ? 1 : 0
+                  }
+              })
+          });
+          const result = await res.json();
+          if (result.status === 'success') {
+              setNotification({ message: `Survei berhasil ${newStatus ? 'diaktifkan' : 'dinonaktifkan'}.`, type: 'success' });
+          } else {
+              throw new Error("Gagal update status");
+          }
+      } catch (e) {
+          // Revert optimistic update
+          setSurveys(prev => prev.map(s => s.id === survey.id ? { ...s, isActive: !newStatus } : s));
+          setNotification({ message: 'Gagal mengubah status survei.', type: 'error' });
+      }
+      setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleDeleteSurvey = async () => {
+      if (!surveyToDelete) return;
+      const id = surveyToDelete.id;
+      setSurveyToDelete(null); // Close modal
+
+      // Optimistic remove
+      const previousSurveys = [...surveys];
+      setSurveys(prev => prev.filter(s => s.id !== id));
+
+      try {
+          const res = await fetch(`${API_URL}?action=monev_delete_survey`, {
+              method: 'POST',
+              body: JSON.stringify({ id: id })
+          });
+          const result = await res.json();
+          
+          if (result.status === 'success') {
+              setNotification({ message: 'Survei dan hasil berhasil dihapus.', type: 'success' });
+          } else {
+              throw new Error(result.message || "Gagal menghapus");
+          }
+      } catch (e) {
+          setSurveys(previousSurveys); // Revert
+          setNotification({ message: 'Gagal menghapus survei.', type: 'error' });
+      }
+      setTimeout(() => setNotification(null), 3000);
   };
 
   // --- ADMIN CREATION LOGIC ---
@@ -169,7 +307,7 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
         id: `q-${Date.now()}`,
         text: '',
         type,
-        options: type === 'choice' || type === 'checkbox' ? [''] : undefined,
+        options: type === 'choice' || type === 'checkbox' ? ['Option 1'] : undefined,
         config: {
             chartType: type === 'choice' ? 'pie' : 'bar',
             minLabel: type === 'likert' ? 'Sangat Tidak Setuju' : undefined,
@@ -177,6 +315,32 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
         }
     };
     setNewQuestions([...newQuestions, q]);
+  };
+
+  // Handlers for Options in Choice/Checkbox Questions
+  const updateOption = (qIdx: number, optIdx: number, val: string) => {
+      const updated = [...newQuestions];
+      if (updated[qIdx].options) {
+          updated[qIdx].options![optIdx] = val;
+          setNewQuestions(updated);
+      }
+  };
+
+  const addOption = (qIdx: number) => {
+      const updated = [...newQuestions];
+      if (!updated[qIdx].options) updated[qIdx].options = [];
+      updated[qIdx].options!.push(`Option ${updated[qIdx].options!.length + 1}`);
+      setNewQuestions(updated);
+  };
+
+  const removeOption = (qIdx: number, optIdx: number) => {
+      const updated = [...newQuestions];
+      if (updated[qIdx].options && updated[qIdx].options!.length > 1) {
+          updated[qIdx].options!.splice(optIdx, 1);
+          setNewQuestions(updated);
+      } else {
+          alert("Minimal satu opsi jawaban harus tersedia.");
+      }
   };
 
   const saveSurvey = async () => {
@@ -202,22 +366,57 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     }
   };
 
+  const toggleDetail = (id: string) => {
+      const next = new Set(expandedDetails);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      setExpandedDetails(next);
+  };
+
   // --- RENDERERS ---
 
+  // NOTIFICATION OVERLAY
+  const renderNotification = () => {
+      if (!notification) return null;
+      return (
+          <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] animate-slide-down">
+              <div className={`px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border ${
+                  notification.type === 'success' 
+                  ? 'bg-emerald-600 text-white border-emerald-700' 
+                  : 'bg-rose-600 text-white border-rose-700'
+              }`}>
+                  {notification.type === 'success' ? <CheckCircle size={24} /> : <AlertCircle size={24} />}
+                  <div className="flex flex-col">
+                      <h4 className="font-bold text-sm uppercase">{notification.type === 'success' ? 'Sukses' : 'Gagal'}</h4>
+                      <p className="text-sm font-medium opacity-90">{notification.message}</p>
+                  </div>
+                  <button onClick={() => setNotification(null)} className="ml-4 opacity-70 hover:opacity-100"><X size={18}/></button>
+              </div>
+          </div>
+      );
+  };
+
   if (view === 'login') {
+    // ... (Login view code remains the same)
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        {renderNotification()}
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200 text-center">
            <div className="w-16 h-16 bg-[#003B73] rounded-2xl flex items-center justify-center mx-auto mb-6 text-white shadow-lg shadow-blue-200">
               <BarChart3 size={32} />
            </div>
-           <h1 className="text-2xl font-bold text-slate-800 mb-2">Monev PDB</h1>
+           
+           <div className="inline-block bg-amber-100 text-amber-800 text-[10px] font-bold px-3 py-1 rounded-full mb-3 uppercase tracking-wide">
+              Khusus Dosen
+           </div>
+
+           <h1 className="text-2xl font-bold text-slate-800 mb-2">Kuesioner PDB</h1>
            <p className="text-slate-500 mb-6 text-sm">Sistem Monitoring & Evaluasi Perkuliahan</p>
            
            {/* Login Role Tabs */}
            <div className="flex p-1.5 bg-slate-100 rounded-xl mb-6">
                <button 
-                 onClick={() => { setLoginRole('lecturer'); setNip(''); setPassword(''); }}
+                 onClick={() => { setLoginRole('lecturer'); setNip(''); setPassword(''); setIsVerified(false); setVerifiedData(null); }}
                  className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${loginRole === 'lecturer' ? 'bg-white text-[#003B73] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                >
                  Dosen
@@ -230,20 +429,64 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                </button>
            </div>
 
-           <form onSubmit={handleLogin} className="space-y-4">
+           <form onSubmit={handleLogin} className="space-y-4" autoComplete="off">
               {loginRole === 'lecturer' ? (
-                  <div className="text-left animate-fade-in">
-                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">NIP Dosen</label>
-                      <div className="relative mt-1">
-                          <input 
-                            type="text" 
-                            value={nip}
-                            onChange={e => setNip(e.target.value)}
-                            className="w-full px-4 py-3 pl-10 rounded-xl border border-slate-300 focus:border-[#003B73] outline-none font-medium"
-                            placeholder="Masukkan NIP Anda"
-                          />
-                          <User size={18} className="absolute left-3 top-3.5 text-slate-400" />
+                  <div className="text-left animate-fade-in space-y-4">
+                      {/* NIP INPUT */}
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 uppercase ml-1">NIP</label>
+                          <div className="flex gap-2 mt-1">
+                              <div className="relative flex-1">
+                                  <input 
+                                    type="text" 
+                                    value={nip}
+                                    onChange={e => {
+                                        setNip(e.target.value);
+                                        // Reset verification if changed
+                                        if (isVerified) {
+                                            setIsVerified(false);
+                                            setVerifiedData(null);
+                                        }
+                                    }}
+                                    className="w-full px-4 py-3 pl-10 rounded-xl border border-slate-300 focus:border-[#003B73] outline-none font-medium"
+                                    placeholder="Masukkan NIP Anda"
+                                    autoComplete="off"
+                                  />
+                                  <User size={18} className="absolute left-3 top-3.5 text-slate-400" />
+                              </div>
+                              {!isVerified && (
+                                  <button 
+                                    type="button"
+                                    onClick={handleVerifyNip}
+                                    disabled={isVerifying}
+                                    className="px-4 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl font-bold text-sm transition-colors border border-blue-200"
+                                  >
+                                      {isVerifying ? <Loader2 size={18} className="animate-spin"/> : 'Verifikasi'}
+                                  </button>
+                              )}
+                          </div>
                       </div>
+
+                      {/* VERIFIED INFO */}
+                      {isVerified && verifiedData && (
+                          <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl animate-slide-down">
+                              <div className="flex items-center gap-2 mb-3 text-emerald-700 font-bold text-xs uppercase tracking-wider">
+                                  <CheckCircle size={14} /> Terverifikasi
+                              </div>
+                              <div className="space-y-3">
+                                  <div>
+                                      <label className="text-[10px] font-bold text-slate-400 uppercase">Nama Lengkap</label>
+                                      <div className="font-bold text-slate-800 text-sm">{verifiedData.name}</div>
+                                  </div>
+                                  <div>
+                                      <label className="text-[10px] font-bold text-slate-400 uppercase">Fakultas / Unit</label>
+                                      <div className="font-bold text-slate-800 text-sm flex items-center gap-1">
+                                          <Building2 size={12} className="text-slate-400"/> {verifiedData.faculty}
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+                      )}
                   </div>
               ) : (
                   <div className="space-y-4 animate-fade-in">
@@ -256,6 +499,7 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                                 onChange={e => setPassword(e.target.value)}
                                 className="w-full px-4 py-3 pl-10 rounded-xl border border-slate-300 focus:border-[#003B73] outline-none font-medium"
                                 placeholder="Password Admin"
+                                autoComplete="new-password"
                               />
                               <Lock size={18} className="absolute left-3 top-3.5 text-slate-400" />
                           </div>
@@ -263,8 +507,15 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                   </div>
               )}
               
-              <button className="w-full py-3 bg-[#FFC700] hover:bg-[#e6b300] text-[#003B73] font-bold rounded-xl transition-all shadow-md mt-2">
-                  {loginRole === 'lecturer' ? 'Masuk Portal Dosen' : 'Masuk Dashboard Admin'}
+              <button 
+                disabled={loginRole === 'lecturer' && !isVerified}
+                className={`w-full py-3 font-bold rounded-xl transition-all shadow-md mt-2 ${
+                    loginRole === 'lecturer' && !isVerified
+                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                    : 'bg-[#FFC700] hover:bg-[#e6b300] text-[#003B73]'
+                }`}
+              >
+                  {loginRole === 'lecturer' ? 'Masuk Kuesioner' : 'Masuk Dashboard Admin'}
               </button>
            </form>
            
@@ -276,9 +527,12 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     );
   }
 
+  // ... (dashboard_lecturer & fill_survey views remain the same)
   if (view === 'dashboard_lecturer') {
+      // ... (code omitted for brevity, logic unchanged from previous revision)
       return (
           <div className="min-h-screen bg-[#FDFBF7] p-6">
+              {renderNotification()}
               <div className="max-w-4xl mx-auto">
                   <header className="flex justify-between items-center mb-8">
                       <div>
@@ -294,17 +548,25 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                               Belum ada kuesioner aktif untuk Anda.
                           </div>
                       ) : Array.isArray(surveys) && surveys.map(s => (
-                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex justify-between items-center">
-                              <div>
+                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                              <div className="flex-1">
                                   <h3 className="font-bold text-lg text-slate-800">{s.title}</h3>
                                   <p className="text-slate-500 text-sm mb-2">{s.description}</p>
                                   <div className="flex gap-2 text-xs font-bold text-slate-400">
-                                      <span className="bg-slate-100 px-2 py-1 rounded">Berakhir: {s.endDate}</span>
+                                      <span className="bg-slate-100 px-2 py-1 rounded flex items-center gap-1">
+                                          <Calendar size={12}/> Berakhir: {s.endDate}
+                                      </span>
                                   </div>
                               </div>
-                              <button onClick={() => startSurvey(s)} className="px-6 py-2 bg-[#003B73] text-white rounded-xl font-bold text-sm hover:bg-[#002b55] shadow-lg shadow-blue-100">
-                                  Isi Kuesioner
-                              </button>
+                              {s.hasResponded ? (
+                                  <button disabled className="px-6 py-2.5 bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl font-bold text-sm cursor-not-allowed flex items-center gap-2">
+                                      <CheckCircle size={16} /> Sudah Diisi
+                                  </button>
+                              ) : (
+                                  <button onClick={() => startSurvey(s)} className="px-6 py-2.5 bg-[#003B73] text-white rounded-xl font-bold text-sm hover:bg-[#002b55] shadow-lg shadow-blue-100 transition-all active:scale-95">
+                                      Isi Kuesioner
+                                  </button>
+                              )}
                           </div>
                       ))}
                   </div>
@@ -314,8 +576,10 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   }
 
   if (view === 'fill_survey') {
+      // ... (code omitted for brevity, logic unchanged from previous revision)
       return (
-          <div className="min-h-screen bg-[#FDFBF7] p-6">
+          <div className="min-h-screen bg-[#FDFBF7] p-6 relative">
+              {renderNotification()}
               <div className="max-w-3xl mx-auto bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
                   <div className="bg-[#003B73] p-8 text-white">
                       <button onClick={() => setView('dashboard_lecturer')} className="mb-4 text-white/70 hover:text-white flex items-center gap-1 text-xs font-bold uppercase tracking-wider"><ArrowLeft size={14}/> Kembali</button>
@@ -395,6 +659,31 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   if (view === 'dashboard_admin') {
       return (
           <div className="min-h-screen bg-slate-50 p-8">
+              {renderNotification()}
+              
+              {/* DELETE CONFIRMATION MODAL */}
+              {surveyToDelete && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+                      <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-slide-down">
+                          <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4 border-4 border-red-50 mx-auto">
+                              <Trash2 size={24} />
+                          </div>
+                          <h3 className="text-lg font-bold text-slate-900 text-center mb-2">Hapus Survei?</h3>
+                          <p className="text-center text-sm text-slate-500 mb-6">
+                              Anda akan menghapus <strong>"{surveyToDelete.title}"</strong> beserta seluruh hasil jawaban. Tindakan ini tidak dapat dibatalkan.
+                          </p>
+                          <div className="flex gap-3">
+                              <button onClick={() => setSurveyToDelete(null)} className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors text-sm">
+                                  Batal
+                              </button>
+                              <button onClick={handleDeleteSurvey} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-200 transition-colors text-sm">
+                                  Ya, Hapus
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
               <div className="max-w-6xl mx-auto">
                   <div className="flex justify-between items-center mb-8">
                       <div>
@@ -411,21 +700,36 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {Array.isArray(surveys) && surveys.map(s => (
-                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group">
+                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group hover:border-blue-300 transition-all">
                               <div className="flex justify-between items-start mb-4">
-                                  <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                                      {s.isActive ? 'Aktif' : 'Selesai'}
+                                  <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase border ${s.isActive ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                      {s.isActive ? 'Aktif' : 'Non-Aktif'}
                                   </div>
-                                  <button onClick={() => { setActiveSurvey(s); fetchResults(s.id); setView('view_results'); }} className="text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center gap-1">
-                                      Lihat Hasil <ArrowRight size={12} />
-                                  </button>
+                                  <div className="flex gap-1">
+                                      <button 
+                                        onClick={() => handleToggleStatus(s)} 
+                                        className={`p-1.5 rounded-lg border transition-colors ${s.isActive ? 'text-amber-600 border-amber-200 bg-amber-50 hover:bg-amber-100' : 'text-green-600 border-green-200 bg-green-50 hover:bg-green-100'}`}
+                                        title={s.isActive ? "Nonaktifkan Survei" : "Aktifkan Survei"}
+                                      >
+                                          <Power size={14} />
+                                      </button>
+                                      <button 
+                                        onClick={() => setSurveyToDelete(s)} 
+                                        className="p-1.5 rounded-lg text-red-500 border border-red-200 bg-red-50 hover:bg-red-100 transition-colors"
+                                        title="Hapus Survei"
+                                      >
+                                          <Trash2 size={14} />
+                                      </button>
+                                  </div>
                               </div>
-                              <h3 className="font-bold text-lg text-slate-800 mb-1">{s.title}</h3>
+                              <h3 className="font-bold text-lg text-slate-800 mb-1 line-clamp-1">{s.title}</h3>
                               <p className="text-xs text-slate-500 font-mono mb-4">{s.startDate} s/d {s.endDate}</p>
                               
-                              <div className="flex gap-2 mt-auto pt-4 border-t border-slate-100">
-                                  {/* Actions placeholder */}
-                                  <span className="text-xs text-slate-400">ID: {s.id.split('-')[1]}</span>
+                              <div className="flex gap-2 mt-auto pt-4 border-t border-slate-100 justify-between items-center">
+                                  <span className="text-[10px] text-slate-400 font-mono select-all">ID: {s.id.split('-')[1]}</span>
+                                  <button onClick={() => { setActiveSurvey(s); fetchResults(s.id); setView('view_results'); }} className="text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors">
+                                      Lihat Hasil <ArrowRight size={12} />
+                                  </button>
                               </div>
                           </div>
                       ))}
@@ -435,7 +739,7 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
       );
   }
 
-  // Create Survey & Results View are complex, simplifying for code block size limit but implementing key custom requirements
+  // Create Survey & Results View
   if (view === 'create_survey') {
       return (
           <div className="min-h-screen bg-slate-50 p-8">
@@ -489,8 +793,40 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                                       />
                                   </div>
 
-                                  {/* Custom Config per Question */}
-                                  <div className="pl-8 grid grid-cols-2 gap-4">
+                                  {/* CONFIG FOR CHOICE / CHECKBOX - NEW UI ADDED */}
+                                  {(q.type === 'choice' || q.type === 'checkbox') && (
+                                      <div className="pl-8 mt-3 space-y-2">
+                                          <label className="text-[10px] font-bold text-slate-400 uppercase">Opsi Jawaban:</label>
+                                          {q.options?.map((opt, optIdx) => (
+                                              <div key={optIdx} className="flex gap-2 items-center">
+                                                  <div className="text-slate-400">{q.type === 'choice' ? <Circle size={14}/> : <Square size={14}/>}</div>
+                                                  <input 
+                                                    type="text" 
+                                                    className="flex-1 p-1.5 text-sm border rounded bg-white"
+                                                    value={opt}
+                                                    onChange={(e) => updateOption(idx, optIdx, e.target.value)}
+                                                    placeholder={`Opsi ${optIdx + 1}`}
+                                                  />
+                                                  <button 
+                                                    onClick={() => removeOption(idx, optIdx)} 
+                                                    className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"
+                                                    title="Hapus Opsi"
+                                                  >
+                                                      <Trash2 size={14} />
+                                                  </button>
+                                              </div>
+                                          ))}
+                                          <button 
+                                            onClick={() => addOption(idx)}
+                                            className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 mt-1"
+                                          >
+                                              <Plus size={12} /> Tambah Opsi
+                                          </button>
+                                      </div>
+                                  )}
+
+                                  {/* CONFIG FOR LIKERT & CHART */}
+                                  <div className="pl-8 mt-3 grid grid-cols-2 gap-4">
                                       {q.type === 'likert' && (
                                           <>
                                             <div>
@@ -588,10 +924,14 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                   <p className="text-slate-500 mb-6">Total Responden: <span className="font-bold text-blue-600">{surveyResults.totalRespondents}</span></p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {surveyResults.results.map((res: any, idx: number) => {
-                          const { question, data } = res;
+                      {surveyResults.results && Array.isArray(surveyResults.results) && surveyResults.results.map((res: any, idx: number) => {
+                          const { question, data = [], details = [] } = res;
+                          const safeData = Array.isArray(data) ? data : [];
+                          const safeDetails = Array.isArray(details) ? details : [];
+                          
                           // Simple Chart Rendering Logic (CSS Based)
-                          const total = data.reduce((acc:any, curr:any) => acc + parseInt(curr.count), 0);
+                          const total = safeData.reduce((acc:any, curr:any) => acc + parseInt(curr.count || 0), 0);
+                          const chartType = question.config?.chartType || 'bar';
                           
                           return (
                               <div key={idx} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm break-inside-avoid">
@@ -599,30 +939,128 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                                   
                                   {question.type === 'text' ? (
                                       <div className="h-40 overflow-y-auto custom-scrollbar space-y-2">
-                                          {data.map((d: any, i: number) => (
+                                          {safeData.length > 0 ? safeData.map((d: any, i: number) => (
                                               <div key={i} className="p-2 bg-slate-50 rounded text-xs text-slate-600 border border-slate-100">"{d.value}"</div>
-                                          ))}
+                                          )) : <div className="text-center text-xs text-slate-400 italic">Belum ada jawaban.</div>}
                                       </div>
                                   ) : (
-                                      <div className="space-y-3">
-                                          {/* Render Bar Chart for Likert/Choice */}
-                                          {data.map((d: any, i: number) => {
-                                              const pct = total > 0 ? (d.count / total) * 100 : 0;
-                                              return (
-                                                  <div key={i}>
-                                                      <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
-                                                          <span>{d.value}</span>
-                                                          <span>{d.count} ({pct.toFixed(1)}%)</span>
-                                                      </div>
-                                                      <div className="w-full bg-slate-100 rounded-full h-2">
-                                                          <div className="bg-blue-600 h-2 rounded-full transition-all duration-1000" style={{ width: `${pct}%` }}></div>
-                                                      </div>
+                                      <div className="mt-4">
+                                          {/* PIE CHART */}
+                                          {chartType === 'pie' && (
+                                              <div className="flex flex-col items-center">
+                                                  <div className="relative w-40 h-40 rounded-full shadow-inner"
+                                                      style={{
+                                                          background: safeData.length > 0 ? `conic-gradient(${
+                                                              safeData.map((d:any, i:number) => {
+                                                                  const prevTotal = safeData.slice(0, i).reduce((p:any, c:any) => p + parseInt(c.count || 0), 0);
+                                                                  const startPct = total > 0 ? (prevTotal / total) * 100 : 0;
+                                                                  const currentPct = total > 0 ? (parseInt(d.count || 0) / total) * 100 : 0;
+                                                                  const endPct = startPct + currentPct;
+                                                                  return `${CHART_COLORS[i % CHART_COLORS.length]} ${startPct}% ${endPct}%`;
+                                                              }).join(', ')
+                                                          })` : '#f1f5f9'
+                                                      }}
+                                                  ></div>
+                                                  <div className="mt-4 w-full grid grid-cols-2 gap-x-2 gap-y-2">
+                                                      {safeData.map((d:any, i:number) => (
+                                                          <div key={i} className="flex items-center gap-2 text-[10px] text-slate-600">
+                                                              <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: CHART_COLORS[i % CHART_COLORS.length]}}></div>
+                                                              <span className="truncate flex-1" title={d.value}>{d.value}</span>
+                                                              <span className="font-bold">{d.count} ({total > 0 ? ((d.count/total)*100).toFixed(0) : 0}%)</span>
+                                                          </div>
+                                                      ))}
                                                   </div>
-                                              )
-                                          })}
-                                          {data.length === 0 && <p className="text-xs text-slate-400 italic">Belum ada data.</p>}
+                                              </div>
+                                          )}
+
+                                          {/* LIST VIEW */}
+                                          {chartType === 'list' && (
+                                              <div className="space-y-2">
+                                                  {safeData.map((d:any, i:number) => {
+                                                      const pct = total > 0 ? (parseInt(d.count || 0) / total) * 100 : 0;
+                                                      return (
+                                                          <div key={i} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg border border-slate-100">
+                                                              <span className="text-xs font-medium text-slate-700 truncate mr-2">{d.value}</span>
+                                                              <div className="flex items-center gap-2 shrink-0">
+                                                                  <span className="text-xs font-bold text-slate-500">{d.count}</span>
+                                                                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full">{pct.toFixed(1)}%</span>
+                                                              </div>
+                                                          </div>
+                                                      )
+                                                  })}
+                                              </div>
+                                          )}
+
+                                          {/* BAR CHART (DEFAULT) */}
+                                          {(chartType === 'bar') && (
+                                              <div className="space-y-3">
+                                                  {safeData.map((d: any, i: number) => {
+                                                      const pct = total > 0 ? (d.count / total) * 100 : 0;
+                                                      return (
+                                                          <div key={i}>
+                                                              <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                                                                  <span>{d.value}</span>
+                                                                  <span>{d.count} ({pct.toFixed(1)}%)</span>
+                                                              </div>
+                                                              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                                                  <div 
+                                                                    className="h-2 rounded-full transition-all duration-1000" 
+                                                                    style={{ width: `${pct}%`, backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                                                                  ></div>
+                                                              </div>
+                                                          </div>
+                                                      )
+                                                  })}
+                                              </div>
+                                          )}
+                                          
+                                          {safeData.length === 0 && <p className="text-xs text-slate-400 italic text-center mt-2">Belum ada data.</p>}
                                       </div>
                                   )}
+
+                                  {/* DETAIL RESPONDEN TOGGLE */}
+                                  <div className="mt-4 pt-4 border-t border-slate-100">
+                                      <button 
+                                          onClick={() => {
+                                              const next = new Set(expandedDetails);
+                                              if (next.has(question.id)) next.delete(question.id);
+                                              else next.add(question.id);
+                                              setExpandedDetails(next);
+                                          }}
+                                          className="flex items-center gap-2 text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors w-full justify-center"
+                                      >
+                                          {expandedDetails.has(question.id) ? (
+                                              <><ChevronUp size={14} /> Sembunyikan Detail Responden</>
+                                          ) : (
+                                              <><Users size={14} /> Lihat Detail Responden ({safeDetails.length})</>
+                                          )}
+                                      </button>
+
+                                      {expandedDetails.has(question.id) && (
+                                          <div className="mt-3 bg-slate-50 rounded-xl p-3 border border-slate-200 max-h-60 overflow-y-auto custom-scrollbar animate-fade-in">
+                                              {safeDetails.length > 0 ? (
+                                                  <table className="w-full text-xs text-left">
+                                                      <thead className="text-slate-400 font-bold border-b border-slate-200 uppercase tracking-wider sticky top-0 bg-slate-50">
+                                                          <tr>
+                                                              <th className="py-2 pl-2">Nama Dosen</th>
+                                                              <th className="py-2">Jawaban</th>
+                                                          </tr>
+                                                      </thead>
+                                                      <tbody className="divide-y divide-slate-200">
+                                                          {safeDetails.map((d: any, i: number) => (
+                                                              <tr key={i} className="hover:bg-white transition-colors">
+                                                                  <td className="py-2 pl-2 font-bold text-slate-700">{d.respondentName}</td>
+                                                                  <td className="py-2 text-slate-600">{d.value}</td>
+                                                              </tr>
+                                                          ))}
+                                                      </tbody>
+                                                  </table>
+                                              ) : (
+                                                  <div className="text-center text-xs text-slate-400 italic py-4">Tidak ada detail responden yang tersedia.</div>
+                                              )}
+                                          </div>
+                                      )}
+                                  </div>
                               </div>
                           );
                       })}
@@ -634,10 +1072,5 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
 
   return <div>Loading...</div>;
 };
-
-// Simple icon for X (Close)
-const X = ({size, className}: any) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>
-);
 
 export default MonevApp;

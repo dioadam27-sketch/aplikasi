@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { User, BookOpen, Clock, Building2, Calendar, CheckCircle, AlertTriangle, X, Filter, Layers, ChevronLeft, ArrowRight, RefreshCw, Loader2, Users, Star, Search, ChevronDown, MapPin, ShieldCheck, UserPlus, Info, Lock, Activity, BarChart3, LayoutDashboard, Key, CheckSquare, Square, ClipboardCheck, Eye, Save, Trash2 } from 'lucide-react';
-import { Course, Lecturer, Room, ScheduleItem, TeachingLog, UserRole } from '../types';
+import { User, BookOpen, Clock, Building2, Calendar, CheckCircle, AlertTriangle, X, Filter, Layers, ChevronLeft, ArrowRight, RefreshCw, Loader2, Users, Star, Search, ChevronDown, MapPin, ShieldCheck, UserPlus, Info, Lock, Activity, BarChart3, LayoutDashboard, Key, CheckSquare, Square, ClipboardCheck, Eye, Save, Trash2, Plus } from 'lucide-react';
+import { Course, Lecturer, Room, ScheduleItem, TeachingLog, UserRole, ClassName, DayOfWeek, TIME_SLOTS } from '../types';
 import { StatCard } from '../components/StatCard';
 
 interface LecturerPortalProps {
@@ -9,11 +9,12 @@ interface LecturerPortalProps {
   courses: Course[];
   lecturers: Lecturer[];
   rooms: Room[];
+  classNames?: ClassName[];
   schedule: ScheduleItem[];
   setSchedule: (schedule: ScheduleItem[]) => void;
   onUpdateLecturer?: (scheduleId: string, lecturerIds: string[], pjmkId?: string) => void;
+  onAddSchedule?: (item: ScheduleItem) => void;
   onSync?: () => void;
-  isLocked?: boolean;
   teachingLogs?: TeachingLog[];
   onAddLog?: (log: TeachingLog) => void;
   onRemoveLog?: (scheduleId: string, lecturerId: string, week: number) => void;
@@ -25,17 +26,19 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   courses,
   lecturers,
   rooms,
+  classNames = [],
   schedule,
   setSchedule,
   onUpdateLecturer,
+  onAddSchedule,
   onSync,
-  isLocked = false,
   teachingLogs = [],
   onAddLog,
   onRemoveLog
 }) => {
   const [activeTab, setActiveTab] = useState<'available' | 'mine'>('available');
-  const [selectedLecturerId, setSelectedLecturerId] = useState<string>(currentLecturerId || '');
+  // For Admin, start empty to force selection. For Lecturer, use their ID.
+  const [selectedLecturerId, setSelectedLecturerId] = useState<string>('');
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   
   // Search states for custom modal
@@ -69,7 +72,7 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
      item: ScheduleItem | null;
   }>({ isOpen: false, item: null });
 
-  // Modal Presensi Detail (Date Input) - Only for Admin in this view context, or read-only details
+  // Modal Presensi Detail (Date Input)
   const [detailModal, setDetailModal] = useState<{
      isOpen: boolean;
      week: number;
@@ -78,21 +81,59 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   
   const [inputDate, setInputDate] = useState<string>('');
 
-  // Calculate Used Rooms (Global Stats)
-  const usedRoomCount = useMemo(() => new Set(schedule.map(s => s.roomId)).size, [schedule]);
+  // Initialize ID based on Role
+  useEffect(() => {
+    if (userRole === 'lecturer' && currentLecturerId) {
+      setSelectedLecturerId(currentLecturerId);
+    }
+    // If Admin, we deliberately keep it empty initially or keep previous selection
+  }, [currentLecturerId, userRole]);
+
+  // --- SMART DEDUPLICATION LOGIC ---
+  // Menggabungkan jadwal duplikat (akibat error input admin) menjadi satu tampilan unik.
+  // Prioritas: 1. Jadwal yang saya ambil, 2. Jadwal yang ada orang lain, 3. Jadwal kosong pertama.
+  const uniqueSchedule = useMemo(() => {
+    const groups = new Map<string, ScheduleItem[]>();
+    
+    schedule.forEach(item => {
+        // Buat key unik berdasarkan konten jadwal (MK, Kelas, Hari, Jam, Ruang)
+        const key = `${item.courseId}-${item.className}-${item.day}-${item.timeSlot}-${item.roomId}`;
+        if (!groups.has(key)) {
+            groups.set(key, []);
+        }
+        groups.get(key)?.push(item);
+    });
+
+    const result: ScheduleItem[] = [];
+    groups.forEach((items) => {
+        // Prioritas 1: Item yang sudah saya ambil (agar muncul di 'Jadwal Saya')
+        const myItem = items.find(i => (i.lecturerIds || []).includes(selectedLecturerId));
+        if (myItem) {
+            result.push(myItem);
+            return;
+        }
+
+        // Prioritas 2: Item yang sudah ada dosennya (Team Teaching)
+        const activeItem = items.find(i => (i.lecturerIds || []).length > 0);
+        if (activeItem) {
+            result.push(activeItem);
+            return;
+        }
+
+        // Prioritas 3: Item kosong pertama
+        if (items.length > 0) {
+            result.push(items[0]);
+        }
+    });
+
+    return result;
+  }, [schedule, selectedLecturerId]);
+
+  // Calculate Used Rooms (Global Stats) using uniqueSchedule
+  const usedRoomCount = useMemo(() => new Set(uniqueSchedule.map(s => s.roomId)).size, [uniqueSchedule]);
 
   // Is Attendance Editable? Only if user is ADMIN.
   const isAttendanceEditable = userRole === 'admin';
-
-  useEffect(() => {
-    if (currentLecturerId) {
-      setSelectedLecturerId(currentLecturerId);
-    }
-  }, [currentLecturerId]);
-
-  // Cleanup scroll listener is not needed for centered modal as strictly as for fixed positioning, 
-  // but good to close on resize if layout breaks, though standard modal behavior handles it.
-  // We can remove the complex listener.
 
   // SORTED LECTURERS (A-Z)
   const sortedLecturers = useMemo(() => {
@@ -118,14 +159,15 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   const getRoomName = (id: string) => getRoom(id)?.name || id;
 
   const availableSchedules = useMemo(() => {
-    return schedule.filter(s => {
+    if (!selectedLecturerId) return [];
+    return uniqueSchedule.filter(s => {
        const ids = s.lecturerIds || [];
-       // LIMIT CHANGED: Max 2 lecturers per class
+       // LIMIT: Max 2 lecturers per class
        const isFull = ids.length >= 2;
        const isAlreadyJoined = ids.includes(selectedLecturerId);
        return !isFull && !isAlreadyJoined;
     });
-  }, [schedule, selectedLecturerId]);
+  }, [uniqueSchedule, selectedLecturerId]);
 
   const coursesWithOpenSlots = useMemo(() => {
     return courses.filter(course => 
@@ -138,8 +180,8 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   [availableSchedules, selectedCourseId]);
 
   const mySchedules = useMemo(() => 
-    schedule.filter(s => (s.lecturerIds || []).includes(selectedLecturerId)),
-  [schedule, selectedLecturerId]);
+    uniqueSchedule.filter(s => (s.lecturerIds || []).includes(selectedLecturerId)),
+  [uniqueSchedule, selectedLecturerId]);
 
   // --- WORKLOAD STATS CALCULATION ---
   const lecturerStats = useMemo(() => {
@@ -172,15 +214,6 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   }, [mySchedules, courses, teachingLogs, selectedLecturerId]);
 
   const initiateClaim = (item: ScheduleItem) => {
-    if (isLocked) {
-        setAlertModal({
-            isOpen: true,
-            title: 'Jadwal Terkunci',
-            message: 'Maaf, periode pengambilan jadwal telah ditutup dan diverifikasi oleh Admin. Anda tidak dapat mengambil jadwal baru.'
-        });
-        return;
-    }
-
     // Check for max 2 concurrent classes
     const conflicts = mySchedules.filter(s => 
       s.day === item.day && 
@@ -211,14 +244,6 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
   };
 
   const initiateRelease = (item: ScheduleItem) => {
-    if (isLocked) {
-        setAlertModal({
-            isOpen: true,
-            title: 'Jadwal Terkunci',
-            message: 'Maaf, periode jadwal telah dikunci oleh Admin. Anda tidak dapat melepas jadwal yang sudah diambil. Silakan hubungi Admin jika ada perubahan mendesak.'
-        });
-        return;
-    }
     setConfirmModal({ isOpen: true, type: 'release', item: item });
   };
 
@@ -277,9 +302,9 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
          existingLog
      });
      
-     if (isAttendanceEditable) {
-         setInputDate(existingLog?.date || new Date().toISOString().split('T')[0]);
-     }
+     // Allow adding/editing if admin or just viewing if lecturer (or change based on requirement)
+     // For now, enabling edit for whoever is accessing this as "My Schedule"
+     setInputDate(existingLog?.date || new Date().toISOString().split('T')[0]);
   };
 
   const saveAttendance = () => {
@@ -338,7 +363,10 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
           <div className="bg-blue-100 p-3 rounded-2xl text-blue-600 shadow-sm"><User size={28} /></div>
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Portal Dosen</h2>
-            <p className="text-slate-500 text-sm">Selamat datang, <span className="font-semibold text-blue-600">{currentLecturerName}</span> {currentLecturerNIP && <span className="text-xs text-slate-400">({currentLecturerNIP})</span>}</p>
+            <p className="text-slate-500 text-sm">
+                Selamat datang, <span className="font-semibold text-blue-600">{selectedLecturerId ? currentLecturerName : (userRole === 'admin' ? 'Administrator' : 'User')}</span> 
+                {currentLecturerNIP && <span className="text-xs text-slate-400 ml-1">({currentLecturerNIP})</span>}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -358,43 +386,44 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
          <StatCard title="Total Dosen" value={lecturers.length} icon={Users} color="text-emerald-500" />
          <StatCard title="Ruangan" value={rooms.length} icon={Building2} color="text-orange-500" />
          <StatCard title="Ruangan Terpakai" value={usedRoomCount} icon={LayoutDashboard} color="text-indigo-500" />
-         <StatCard title="Total Jadwal" value={schedule.length} icon={Calendar} color="text-purple-500" />
+         <StatCard title="Total Jadwal" value={uniqueSchedule.length} icon={Calendar} color="text-purple-500" />
       </div>
       
-      {!currentLecturerId && (
+      {/* SHOW SEARCH BOX FOR ADMIN OR IF NO LECTURER SELECTED */}
+      {(userRole === 'admin' || !currentLecturerId) && (
         <>
-            {/* Info Box (Separate from Search) - COMPACT VERSION */}
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col sm:flex-row items-center gap-3 animate-fade-in mt-4">
-                <div className="bg-amber-100 p-2 rounded-lg text-amber-700 shrink-0">
-                    <AlertTriangle size={20} />
-                </div>
-                <div className="text-center sm:text-left">
-                    <h3 className="font-bold text-amber-900 text-xs uppercase tracking-wide">Simulasi Mode Admin</h3>
-                    <p className="text-amber-800 text-[11px] mt-0.5">
-                        Pilih identitas dosen untuk mencoba fitur.
-                    </p>
-                </div>
-            </div>
-            
             {/* Search Box Trigger - COMPACT */}
-            <div className="mt-3">
+            <div className="mt-4">
                 <div 
                     onClick={openSearch}
-                    className="flex items-center justify-between bg-white border border-slate-300 rounded-xl px-3 py-2.5 cursor-pointer shadow-sm hover:border-blue-400 hover:shadow-md transition-all group select-none"
+                    className="flex items-center justify-between bg-white border border-slate-300 rounded-xl px-3 py-3 cursor-pointer shadow-sm hover:border-blue-400 hover:shadow-md transition-all group select-none relative"
                 >
-                    <div className="flex items-center gap-2 overflow-hidden">
-                        <Search size={16} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
-                        <span className={`text-sm font-bold ${selectedLecturerId ? 'text-slate-800' : 'text-slate-400'}`}>
+                    {/* Floating Label for Admin Context */}
+                    <div className="absolute -top-2.5 left-3 bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-200">
+                        {userRole === 'admin' ? 'Mode Admin: Pilih Dosen untuk Kelola Jadwal' : 'Pilih Identitas Dosen'}
+                    </div>
+
+                    <div className="flex items-center gap-3 overflow-hidden w-full">
+                        <Search size={18} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                        <span className={`text-sm font-bold truncate flex-1 ${selectedLecturerId ? 'text-slate-800' : 'text-slate-400'}`}>
                             {selectedLecturerId ? currentLecturerName : 'Cari Nama Dosen atau NIP...'}
                         </span>
+                        {selectedLecturerId && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setSelectedLecturerId(''); }}
+                                className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"
+                            >
+                                <X size={16} />
+                            </button>
+                        )}
+                        <ChevronDown size={16} className="text-slate-400" />
                     </div>
-                    <ChevronDown size={16} className="text-slate-400" />
                 </div>
 
                 {/* Centered Modal for Search (Pop Up) */}
                 {isSearchOpen && (
                     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4">
-                        {/* Backdrop - slightly visible to capture focus, click to close */}
+                        {/* Backdrop */}
                         <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[1px]" onClick={() => setIsSearchOpen(false)}></div>
                         
                         <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-zoom-in relative z-10 flex flex-col">
@@ -488,31 +517,34 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
         </div>
       )}
 
-      {/* ... Rest of component remains same ... */}
       {!selectedLecturerId ? (
          <div className="bg-white rounded-2xl p-20 text-center shadow-sm border border-slate-200 mt-6">
            <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
              <User size={40} />
            </div>
            <h3 className="text-xl font-bold text-slate-700">Identitas Belum Dipilih</h3>
-           <p className="text-slate-400 max-w-xs mx-auto mt-2">Silakan pilih nama dosen pada panel di atas untuk mengakses jadwal kuliah.</p>
+           <p className="text-slate-400 max-w-xs mx-auto mt-2">
+               {userRole === 'admin' ? 'Silakan cari dan pilih dosen pada kolom pencarian di atas untuk mengelola jadwalnya.' : 'Silakan pilih nama dosen pada panel di atas untuk mengakses jadwal kuliah.'}
+           </p>
          </div>
       ) : (
         <>
-            <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm w-fit mt-4">
-                <button 
-                  onClick={() => setActiveTab('available')} 
-                  className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'available' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  <BookOpen size={18} /> Jadwal Tersedia
-                </button>
-                <button 
-                  onClick={() => setActiveTab('mine')} 
-                  className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'mine' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                  <CheckCircle size={18} /> Jadwal Saya
-                  {mySchedules.length > 0 && <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'mine' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>{mySchedules.length}</span>}
-                </button>
+            <div className="flex flex-wrap items-center justify-between gap-4 mt-4">
+                <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm w-fit">
+                    <button 
+                    onClick={() => setActiveTab('available')} 
+                    className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'available' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                    <BookOpen size={18} /> Jadwal Tersedia
+                    </button>
+                    <button 
+                    onClick={() => setActiveTab('mine')} 
+                    className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'mine' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                    <CheckCircle size={18} /> Jadwal {userRole === 'admin' ? 'Terpilih' : 'Saya'}
+                    {mySchedules.length > 0 && <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'mine' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>{mySchedules.length}</span>}
+                    </button>
+                </div>
             </div>
 
             <div className="min-h-[500px] animate-fade-in mt-6">
@@ -579,7 +611,17 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                                         const teamCount = (item.lecturerIds || []).length;
                                         const room = getRoom(item.roomId);
                                         return (
-                                          <div key={item.id} className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-blue-300 hover:shadow-md transition-all flex justify-between items-center group">
+                                          <div key={item.id} className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-blue-300 hover:shadow-md transition-all flex justify-between items-center group relative overflow-hidden">
+                                              
+                                              {item.isLocked && (
+                                                  <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center backdrop-blur-[1px]">
+                                                      <div className="bg-white px-4 py-2 rounded-xl shadow-lg border border-slate-200 flex items-center gap-2">
+                                                          <Lock size={16} className="text-slate-400" />
+                                                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Dikunci Admin</span>
+                                                      </div>
+                                                  </div>
+                                              )}
+
                                               <div>
                                                   <div className="flex items-center gap-2 mb-3">
                                                       <span className="bg-blue-600 text-white px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-tight shadow-sm">{item.className}</span>
@@ -599,11 +641,21 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                                                   )}
                                               </div>
                                               <button 
-                                                onClick={() => initiateClaim(item)} 
-                                                disabled={isLocked}
-                                                className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg active:scale-95 text-white ${isLocked ? 'bg-slate-300 cursor-not-allowed shadow-none' : teamCount === 0 ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-100' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'}`}
+                                                onClick={() => !item.isLocked && initiateClaim(item)} 
+                                                disabled={!!item.isLocked}
+                                                className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all shadow-lg active:scale-95 text-white ${
+                                                    item.isLocked 
+                                                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none border border-slate-200'
+                                                    : teamCount === 0 
+                                                        ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-100' 
+                                                        : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
+                                                }`}
                                               >
-                                                {isLocked ? 'Terkunci' : teamCount === 0 ? 'Ambil Kelas' : 'Gabung Team'}
+                                                {item.isLocked ? (
+                                                    <div className="flex items-center gap-2"><Lock size={14}/> Ditutup</div>
+                                                ) : (
+                                                    teamCount === 0 ? 'Ambil Kelas' : 'Gabung Team'
+                                                )}
                                               </button>
                                           </div>
                                         );
@@ -617,8 +669,8 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                 {activeTab === 'mine' && (
                     <div className="space-y-6">
                         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                            <h3 className="text-lg font-bold text-slate-800">Jadwal Mengajar Anda</h3>
-                            <p className="text-slate-500 text-sm">Berikut adalah daftar kelas PDB yang telah Anda ambil.</p>
+                            <h3 className="text-lg font-bold text-slate-800">Jadwal Mengajar {userRole === 'admin' ? 'Dosen Ini' : 'Anda'}</h3>
+                            <p className="text-slate-500 text-sm">Berikut adalah daftar kelas PDB yang telah {userRole === 'admin' ? 'diambil oleh dosen ini' : 'Anda ambil'}.</p>
                         </div>
                         
                         {mySchedules.length === 0 ? (
@@ -654,7 +706,7 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                                                         <td className="p-4">
                                                             <div className="font-bold text-slate-800 text-sm">{course?.name}</div>
                                                             <div className="text-[10px] text-slate-400 font-bold uppercase">{course?.code}</div>
-                                                            {isMePjmk && <span className="mt-1 inline-flex items-center gap-1 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[9px] font-bold"><Star size={8} /> Anda PJMK</span>}
+                                                            {isMePjmk && <span className="mt-1 inline-flex items-center gap-1 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[9px] font-bold"><Star size={8} /> PJMK</span>}
                                                         </td>
                                                         <td className="p-4">
                                                             <div className="flex items-center gap-2 text-slate-700 text-sm font-bold">
@@ -675,19 +727,19 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                                                         <td className="p-4 text-center">
                                                             <button 
                                                                 onClick={() => setAttendanceModal({isOpen: true, item: item})}
-                                                                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all mx-auto ${isAttendanceEditable ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200' : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border-slate-200'}`}
+                                                                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-all mx-auto bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200`}
                                                             >
-                                                                {isAttendanceEditable ? <ClipboardCheck size={14} /> : <Eye size={14} />}
-                                                                {isAttendanceEditable ? `Isi Kehadiran (${attendanceCount}/16)` : `Lihat Kehadiran (${attendanceCount}/16)`}
+                                                                <ClipboardCheck size={14} />
+                                                                Isi Kehadiran ({attendanceCount}/16)
                                                             </button>
                                                         </td>
                                                         <td className="p-4 text-right">
                                                             <button 
                                                               onClick={() => initiateRelease(item)} 
-                                                              disabled={isLocked}
-                                                              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all border ${isLocked ? 'text-slate-400 border-slate-200 cursor-not-allowed bg-slate-50' : 'text-red-500 hover:text-white hover:bg-red-500 border-red-200'}`}
+                                                              disabled={!!item.isLocked}
+                                                              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all border ${item.isLocked ? 'text-slate-400 border-slate-200 cursor-not-allowed bg-slate-100' : 'text-red-500 hover:text-white hover:bg-red-500 border-red-200'}`}
                                                             >
-                                                              {isLocked ? 'Terkunci' : 'Lepas'}
+                                                              {item.isLocked ? 'Terkunci' : 'Lepas'}
                                                             </button>
                                                         </td>
                                                     </tr>
@@ -704,7 +756,147 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
         </>
       )}
 
-      {/* Confirmation and Alert Modals are same as original ... */}
+      {/* Confirmation Modal (Schedule) */}
+      {confirmModal.isOpen && confirmModal.item && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-10 sm:pt-20">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}></div>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md relative z-10 overflow-hidden animate-slide-down">
+             {/* ... (Existing Confirmation Modal Content) ... */}
+            <div className={`p-8 flex items-center gap-5 border-b ${confirmModal.type === 'release' ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
+              <div className={`p-4 rounded-2xl ${confirmModal.type === 'release' ? 'bg-red-600 text-white shadow-lg shadow-red-100' : 'bg-blue-600 text-white shadow-lg shadow-blue-100'}`}>
+                {confirmModal.type === 'release' ? <AlertTriangle size={32} /> : <CheckCircle size={32} />}
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">
+                  {confirmModal.type === 'claim_pjmk' && 'Konfirmasi Jadwal'}
+                  {confirmModal.type === 'join_team' && 'Gabung Team Teaching'}
+                  {confirmModal.type === 'release' && 'Lepas Jadwal'}
+                </h3>
+                <p className="text-slate-500 text-xs font-medium">Kelas {confirmModal.item.className}</p>
+              </div>
+              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="absolute top-6 right-6 text-slate-400 hover:text-slate-600 transition-colors"><X size={24} /></button>
+            </div>
+            
+            <div className="p-8">
+              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-6">
+                <div className="font-black text-slate-800 text-xl mb-4 leading-tight">{getCourse(confirmModal.item.courseId)?.name}</div>
+                <div className="space-y-3">
+                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Calendar size={18} className="text-blue-500" /> <span>{confirmModal.item.day}</span></div>
+                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Clock size={18} className="text-blue-500" /> <span>{confirmModal.item.timeSlot}</span></div>
+                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Building2 size={18} className="text-blue-500" /> <span>{getRoomName(confirmModal.item.roomId)} {getRoom(confirmModal.item.roomId)?.building && `(Gedung ${getRoom(confirmModal.item.roomId)?.building})`}</span></div>
+                </div>
+              </div>
+
+              {confirmModal.type === 'claim_pjmk' && (
+                 <div className="space-y-4">
+                   <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex gap-3 text-blue-800 text-sm">
+                      <Star size={20} className="shrink-0 text-blue-600" />
+                      <div>
+                          <strong>{selectedLecturerId ? currentLecturerName : 'Anda'} adalah Dosen Pertama!</strong><br/>
+                          Silakan pilih peran dalam kelas ini:
+                          <ul className="mt-2 space-y-1 list-disc list-inside text-xs text-blue-700">
+                              <li><strong>PJMK:</strong> Mengajar Sebelum UTS (Pertemuan 1-7)</li>
+                              <li><strong>Team:</strong> Mengajar Setelah UTS (Pertemuan 8-14)</li>
+                          </ul>
+                      </div>
+                   </div>
+                 </div>
+              )}
+
+              {confirmModal.type === 'join_team' && (
+                 <div className="space-y-3">
+                     {!confirmModal.item.pjmkLecturerId ? (
+                        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-900 text-sm">
+                            <Star size={20} className="shrink-0 text-amber-600" />
+                            <div>
+                                <strong>Otomatis Menjadi PJMK</strong><br/>
+                                <span className="text-xs">Dosen pertama memilih sebagai Team, sehingga otomatis menjadi PJMK.</span>
+                                <div className="mt-2 bg-white/60 p-2 rounded-lg border border-amber-100">
+                                    <ul className="space-y-1 list-disc list-inside text-xs text-amber-800 font-medium">
+                                        <li><strong>Role:</strong> PJMK (Koordinator)</li>
+                                        <li><strong>Jadwal:</strong> Mengajar Sebelum UTS (1-7)</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                     ) : (
+                        <>
+                             <p className="text-center text-sm text-slate-500">
+                                Akan bergabung sebagai anggota tim pengajar (Team Teaching). Slot tersisa: {2 - (confirmModal.item.lecturerIds?.length || 0)} orang.
+                             </p>
+                             <div className="bg-slate-100 p-3 rounded-xl flex gap-2 text-xs text-slate-600">
+                                 <Info size={16} className="shrink-0 mt-0.5 text-slate-400" />
+                                 <span>Sebagai <strong>Team Teaching</strong>, dijadwalkan mengajar 7 pertemuan <strong>setelah UTS</strong>.</span>
+                             </div>
+                        </>
+                     )}
+                 </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex gap-3">
+              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-3 rounded-2xl text-slate-500 font-bold hover:bg-slate-200 transition-colors text-sm">Batal</button>
+              
+              {confirmModal.type === 'claim_pjmk' ? (
+                 <div className="flex-1 flex gap-2">
+                    <button 
+                      onClick={() => handleConfirmAction(false)} 
+                      className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-800 transition-all text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <UserPlus size={16} /> Team Saja
+                    </button>
+                    <button 
+                      onClick={() => handleConfirmAction(true)} 
+                      className="flex-1 px-4 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold shadow-lg shadow-amber-200 transition-all active:scale-95 text-xs sm:text-sm flex items-center justify-center gap-2"
+                    >
+                      <Star size={16} className="fill-white" /> Jadi PJMK
+                    </button>
+                 </div>
+              ) : (
+                <button 
+                  onClick={() => handleConfirmAction(false)} 
+                  className={`flex-1 px-4 py-3 rounded-2xl text-white font-bold shadow-lg transition-all transform active:scale-95 ${confirmModal.type === 'release' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}
+                >
+                  {confirmModal.type === 'release' ? 'Lepas Jadwal' : 'Konfirmasi'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM ALERT MODAL */}
+      {alertModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={() => setAlertModal({ ...alertModal, isOpen: false })}></div>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm relative z-10 overflow-hidden animate-slide-down">
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle size={32} />
+              </div>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">{alertModal.title}</h3>
+              <p className="text-slate-600 text-sm font-medium leading-relaxed">
+                {alertModal.message}
+              </p>
+              {alertModal.details && (
+                <div className="mt-4 bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-500 text-left">
+                  <span className="font-bold block mb-1">Detail Konflik:</span>
+                  {alertModal.details}
+                </div>
+              )}
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-100">
+               <button 
+                 onClick={() => setAlertModal({ ...alertModal, isOpen: false })}
+                 className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold transition-all shadow-lg active:scale-95"
+               >
+                 Mengerti
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ATTENDANCE MODAL (LIST OF WEEKS) */}
       {attendanceModal.isOpen && attendanceModal.item && (
           <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-10 sm:pt-20">
@@ -720,15 +912,8 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                   <div className="p-6">
                       <div className="flex justify-between items-center mb-4">
                         <p className="text-sm text-slate-600">
-                            {isAttendanceEditable 
-                              ? 'Klik pada pertemuan untuk mengisi atau mengubah tanggal realisasi.' 
-                              : 'Klik pada pertemuan untuk melihat detail tanggal kehadiran.'}
+                            Klik pada pertemuan untuk mengisi atau mengubah tanggal realisasi.
                         </p>
-                        {!isAttendanceEditable && (
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded font-bold border border-slate-200 flex items-center gap-1">
-                                <Lock size={10} /> View Only
-                            </span>
-                        )}
                       </div>
                       <div className="grid grid-cols-4 sm:grid-cols-8 gap-3">
                           {Array.from({length: 16}, (_, i) => i + 1).map(week => {
@@ -773,208 +958,41 @@ const LecturerPortal: React.FC<LecturerPortalProps> = ({
                   <p className="text-sm text-slate-500">Pertemuan Ke-{detailModal.week}</p>
               </div>
               <div className="p-6 space-y-4">
-                  {isAttendanceEditable ? (
-                    <>
-                      <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Tanggal Realisasi</label>
-                          <input 
-                            type="date"
-                            value={inputDate}
-                            onChange={(e) => setInputDate(e.target.value)}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-800"
-                          />
+                  <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Tanggal Realisasi</label>
+                      <input 
+                        type="date"
+                        value={inputDate}
+                        onChange={(e) => setInputDate(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 font-bold text-slate-800"
+                      />
+                  </div>
+                  <div className="flex items-center gap-2 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                      <Calendar size={18} className="text-blue-500" />
+                      <div className="text-sm">
+                          <span className="text-slate-500">Hari:</span> <span className="font-bold text-blue-700">{inputDate ? new Date(inputDate).toLocaleDateString('id-ID', { weekday: 'long' }) : '-'}</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-blue-50 p-3 rounded-xl border border-blue-100">
-                          <Calendar size={18} className="text-blue-500" />
-                          <div className="text-sm">
-                              <span className="text-slate-500">Hari:</span> <span className="font-bold text-blue-700">{inputDate ? new Date(inputDate).toLocaleDateString('id-ID', { weekday: 'long' }) : '-'}</span>
-                          </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-4">
-                       {detailModal.existingLog ? (
-                          <>
-                            <div className="text-4xl font-black text-slate-800 mb-2">
-                               {new Date(detailModal.existingLog.date || '').getDate()}
-                            </div>
-                            <div className="text-lg font-bold text-blue-600 mb-1">
-                               {new Date(detailModal.existingLog.date || '').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
-                            </div>
-                            <div className="text-sm text-slate-500 uppercase font-bold tracking-widest">
-                               {new Date(detailModal.existingLog.date || '').toLocaleDateString('id-ID', { weekday: 'long' })}
-                            </div>
-                          </>
-                       ) : (
-                          <p className="text-slate-400 italic">Belum ada data kehadiran.</p>
-                       )}
-                    </div>
-                  )}
+                  </div>
               </div>
               <div className="p-5 border-t border-slate-100 bg-slate-50 flex gap-3">
                  <button onClick={() => setDetailModal(null)} className="flex-1 bg-white border border-slate-200 text-slate-600 px-4 py-2.5 rounded-xl font-bold text-sm">Tutup</button>
                  
-                 {isAttendanceEditable && (
-                    <>
-                       {detailModal.existingLog && (
-                         <button 
-                            onClick={removeAttendance}
-                            className="bg-red-100 text-red-700 hover:bg-red-200 px-4 py-2.5 rounded-xl font-bold text-sm transition-all"
-                         >
-                            <Trash2 size={16} />
-                         </button>
-                       )}
-                       <button 
-                          onClick={saveAttendance}
-                          className="flex-1 bg-emerald-500 text-white hover:bg-emerald-600 px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
-                       >
-                          <Save size={16} /> Simpan
-                       </button>
-                    </>
+                 {detailModal.existingLog && (
+                    <button 
+                    onClick={removeAttendance}
+                    className="bg-red-100 text-red-700 hover:bg-red-200 px-4 py-2.5 rounded-xl font-bold text-sm transition-all"
+                    >
+                    <Trash2 size={16} />
+                    </button>
                  )}
+                 <button 
+                    onClick={saveAttendance}
+                    className="flex-1 bg-emerald-500 text-white hover:bg-emerald-600 px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+                 >
+                    <Save size={16} /> Simpan
+                 </button>
               </div>
            </div>
-        </div>
-      )}
-
-      {/* CUSTOM ALERT MODAL */}
-      {alertModal.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in" onClick={() => setAlertModal({ ...alertModal, isOpen: false })}></div>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm relative z-10 overflow-hidden animate-slide-down">
-            <div className="p-6 text-center">
-              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <AlertTriangle size={32} />
-              </div>
-              <h3 className="text-xl font-bold text-slate-800 mb-2">{alertModal.title}</h3>
-              <p className="text-slate-600 text-sm font-medium leading-relaxed">
-                {alertModal.message}
-              </p>
-              {alertModal.details && (
-                <div className="mt-4 bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-500 text-left">
-                  <span className="font-bold block mb-1">Detail Konflik:</span>
-                  {alertModal.details}
-                </div>
-              )}
-            </div>
-            <div className="p-4 bg-slate-50 border-t border-slate-100">
-               <button 
-                 onClick={() => setAlertModal({ ...alertModal, isOpen: false })}
-                 className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold transition-all shadow-lg active:scale-95"
-               >
-                 Mengerti
-               </button>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Confirmation Modal (Schedule) */}
-      {confirmModal.isOpen && confirmModal.item && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-10 sm:pt-20">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}></div>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md relative z-10 overflow-hidden animate-slide-down">
-             {/* ... (Existing Confirmation Modal Content) ... */}
-            <div className={`p-8 flex items-center gap-5 border-b ${confirmModal.type === 'release' ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
-              <div className={`p-4 rounded-2xl ${confirmModal.type === 'release' ? 'bg-red-600 text-white shadow-lg shadow-red-100' : 'bg-blue-600 text-white shadow-lg shadow-blue-100'}`}>
-                {confirmModal.type === 'release' ? <AlertTriangle size={32} /> : <CheckCircle size={32} />}
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-slate-800">
-                  {confirmModal.type === 'claim_pjmk' && 'Konfirmasi Jadwal'}
-                  {confirmModal.type === 'join_team' && 'Gabung Team Teaching'}
-                  {confirmModal.type === 'release' && 'Lepas Jadwal'}
-                </h3>
-                <p className="text-slate-500 text-xs font-medium">Kelas {confirmModal.item.className}</p>
-              </div>
-              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="absolute top-6 right-6 text-slate-400 hover:text-slate-600 transition-colors"><X size={24} /></button>
-            </div>
-            
-            <div className="p-8">
-              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-6">
-                <div className="font-black text-slate-800 text-xl mb-4 leading-tight">{getCourse(confirmModal.item.courseId)?.name}</div>
-                <div className="space-y-3">
-                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Calendar size={18} className="text-blue-500" /> <span>{confirmModal.item.day}</span></div>
-                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Clock size={18} className="text-blue-500" /> <span>{confirmModal.item.timeSlot}</span></div>
-                   <div className="flex items-center gap-3 text-sm text-slate-600 font-bold"><Building2 size={18} className="text-blue-500" /> <span>{getRoomName(confirmModal.item.roomId)} {getRoom(confirmModal.item.roomId)?.building && `(Gedung ${getRoom(confirmModal.item.roomId)?.building})`}</span></div>
-                </div>
-              </div>
-
-              {confirmModal.type === 'claim_pjmk' && (
-                 <div className="space-y-4">
-                   <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex gap-3 text-blue-800 text-sm">
-                      <Star size={20} className="shrink-0 text-blue-600" />
-                      <div>
-                          <strong>Anda adalah Dosen Pertama!</strong><br/>
-                          Silakan pilih peran Anda dalam kelas ini:
-                          <ul className="mt-2 space-y-1 list-disc list-inside text-xs text-blue-700">
-                              <li><strong>PJMK:</strong> Mengajar Sebelum UTS (Pertemuan 1-7)</li>
-                              <li><strong>Team:</strong> Mengajar Setelah UTS (Pertemuan 8-14)</li>
-                          </ul>
-                      </div>
-                   </div>
-                 </div>
-              )}
-
-              {confirmModal.type === 'join_team' && (
-                 <div className="space-y-3">
-                     {!confirmModal.item.pjmkLecturerId ? (
-                        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex gap-3 text-amber-900 text-sm">
-                            <Star size={20} className="shrink-0 text-amber-600" />
-                            <div>
-                                <strong>Anda Otomatis Menjadi PJMK</strong><br/>
-                                <span className="text-xs">Dosen pertama memilih sebagai Team, sehingga Anda otomatis menjadi PJMK.</span>
-                                <div className="mt-2 bg-white/60 p-2 rounded-lg border border-amber-100">
-                                    <ul className="space-y-1 list-disc list-inside text-xs text-amber-800 font-medium">
-                                        <li><strong>Role:</strong> PJMK (Koordinator)</li>
-                                        <li><strong>Jadwal:</strong> Mengajar Sebelum UTS (1-7)</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                     ) : (
-                        <>
-                             <p className="text-center text-sm text-slate-500">
-                                Anda akan bergabung sebagai anggota tim pengajar (Team Teaching). Slot tersisa: {2 - (confirmModal.item.lecturerIds?.length || 0)} orang.
-                             </p>
-                             <div className="bg-slate-100 p-3 rounded-xl flex gap-2 text-xs text-slate-600">
-                                 <Info size={16} className="shrink-0 mt-0.5 text-slate-400" />
-                                 <span>Sebagai <strong>Team Teaching</strong>, Anda dijadwalkan mengajar 7 pertemuan <strong>setelah UTS</strong>.</span>
-                             </div>
-                        </>
-                     )}
-                 </div>
-              )}
-            </div>
-
-            <div className="p-6 border-t border-slate-100 bg-slate-50 flex gap-3">
-              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-3 rounded-2xl text-slate-500 font-bold hover:bg-slate-200 transition-colors text-sm">Batal</button>
-              
-              {confirmModal.type === 'claim_pjmk' ? (
-                 <div className="flex-1 flex gap-2">
-                    <button 
-                      onClick={() => handleConfirmAction(false)} 
-                      className="flex-1 px-4 py-3 rounded-2xl bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100 hover:text-slate-800 transition-all text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2"
-                    >
-                      <UserPlus size={16} /> Team Saja
-                    </button>
-                    <button 
-                      onClick={() => handleConfirmAction(true)} 
-                      className="flex-1 px-4 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold shadow-lg shadow-amber-200 transition-all active:scale-95 text-xs sm:text-sm flex items-center justify-center gap-2"
-                    >
-                      <Star size={16} className="fill-white" /> Jadi PJMK
-                    </button>
-                 </div>
-              ) : (
-                <button 
-                  onClick={() => handleConfirmAction(false)} 
-                  className={`flex-1 px-4 py-3 rounded-2xl text-white font-bold shadow-lg transition-all transform active:scale-95 ${confirmModal.type === 'release' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}
-                >
-                  {confirmModal.type === 'release' ? 'Lepas Jadwal' : 'Konfirmasi'}
-                </button>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>

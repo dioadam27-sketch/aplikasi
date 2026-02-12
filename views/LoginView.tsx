@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, ShieldCheck, CalendarClock, AlertTriangle, RefreshCw, Loader2, ArrowRight, LayoutGrid } from 'lucide-react';
+import { Lock, User, ShieldCheck, CalendarClock, AlertTriangle, RefreshCw, Loader2, ArrowRight, LayoutGrid, ArrowLeft } from 'lucide-react';
 import { Lecturer, UserRole } from '../types';
 
 interface LoginViewProps {
@@ -75,7 +75,7 @@ const LoginView: React.FC<LoginViewProps> = ({ lecturers, onLogin, onSync, sessi
           onClick={onBack}
           className="fixed top-6 left-6 flex items-center gap-2 px-4 py-2 bg-white text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition-all font-bold text-sm z-50 border border-slate-100"
         >
-          <ArrowRight size={16} className="rotate-180" /> Kembali ke Portal
+          <ArrowLeft size={16} /> Kembali ke Portal
         </button>
       )}
 
@@ -164,7 +164,7 @@ const LoginView: React.FC<LoginViewProps> = ({ lecturers, onLogin, onSync, sessi
                </button>
              </div>
 
-             <form onSubmit={handleLogin} className="space-y-5">
+             <form onSubmit={handleLogin} className="space-y-5" autoComplete="off">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide">
                     {roleTab === 'admin' ? 'Username' : 'Nama Lengkap / NIP'}
@@ -176,6 +176,7 @@ const LoginView: React.FC<LoginViewProps> = ({ lecturers, onLogin, onSync, sessi
                       placeholder={roleTab === 'admin' ? 'Masukkan username' : 'Contoh: 198501...'}
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="off"
                     />
                     <User size={18} className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-primary-500 transition-colors" />
                   </div>
@@ -192,6 +193,7 @@ const LoginView: React.FC<LoginViewProps> = ({ lecturers, onLogin, onSync, sessi
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
                     />
                     <Lock size={18} className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-primary-500 transition-colors" />
                   </div>

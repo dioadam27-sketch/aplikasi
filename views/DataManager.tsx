@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Plus, Edit2, Trash2, Upload, RefreshCw, X, Search, 
-  FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Check, ChevronDown
+  FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown, Check, ChevronDown, AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -129,6 +129,9 @@ const DataManager = <T extends { id: string }>({
   // Sorting State
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   
+  // Delete Modal State
+  const [deleteConfirm, setDeleteConfirm] = useState<{isOpen: boolean, id: string | null}>({isOpen: false, id: null});
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -158,6 +161,17 @@ const DataManager = <T extends { id: string }>({
     }
     setModalOpen(false);
     setFormData({});
+  };
+
+  const handleDeleteClick = (id: string) => {
+      setDeleteConfirm({ isOpen: true, id });
+  };
+
+  const confirmDelete = () => {
+      if (deleteConfirm.id) {
+          onDelete(deleteConfirm.id);
+          setDeleteConfirm({ isOpen: false, id: null });
+      }
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,7 +345,7 @@ const DataManager = <T extends { id: string }>({
                                 <td className="p-4 text-right">
                                     <div className="flex items-center justify-end gap-2">
                                         <button onClick={(e) => handleEditClick(e, item)} className="p-2 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"><Edit2 size={18}/></button>
-                                        <button onClick={() => onDelete(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={18}/></button>
+                                        <button onClick={() => handleDeleteClick(item.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={18}/></button>
                                     </div>
                                 </td>
                             </tr>
@@ -342,7 +356,7 @@ const DataManager = <T extends { id: string }>({
          </div>
       </div>
 
-      {/* MODAL SYSTEM - MOVED TO PORTAL */}
+      {/* FORM MODAL SYSTEM */}
       {modalOpen && createPortal(
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={() => setModalOpen(false)}>
            <div 
@@ -359,6 +373,38 @@ const DataManager = <T extends { id: string }>({
                 handleInputChange={handleInputChange} 
              />
            </div>
+        </div>,
+        document.body
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deleteConfirm.isOpen && createPortal(
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-slide-down border border-white/20">
+                <div className="p-6 text-center">
+                    <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-red-50">
+                        <AlertTriangle size={32} />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900 mb-2">Hapus Data?</h3>
+                    <p className="text-slate-500 text-sm">
+                        Apakah Anda yakin ingin menghapus data ini? Tindakan ini tidak dapat dibatalkan.
+                    </p>
+                </div>
+                <div className="flex bg-slate-50 border-t border-slate-100">
+                    <button 
+                        onClick={() => setDeleteConfirm({isOpen: false, id: null})} 
+                        className="flex-1 py-3 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-colors border-r border-slate-100"
+                    >
+                        Batal
+                    </button>
+                    <button 
+                        onClick={confirmDelete} 
+                        className="flex-1 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                        Ya, Hapus
+                    </button>
+                </div>
+            </div>
         </div>,
         document.body
       )}

@@ -1,11 +1,13 @@
 <?php
 // db_config.php
-// File ini menyimpan kredensial database secara terpisah untuk keamanan.
+// File ini menyimpan kredensial database.
+// PENTING: Jangan upload file ini ke public folder atau frontend hosting (Netlify/Vercel).
+// Upload file ini ke folder private di server PHP/cPanel Anda.
 
 $host = 'localhost';
-$db   = 'pkkiipendidikanu_ruangpdb';
-$user = 'pkkiipendidikanu_dioarsip';
-$pass = '@Dioadam27';
+$db   = 'pkkiipendidikanu_ruangpdb'; // Sesuaikan dengan DB Anda
+$user = 'pkkiipendidikanu_dioarsip'; // Sesuaikan dengan User Anda
+$pass = '@Dioadam27'; // Sesuaikan dengan Password Anda
 $charset = 'utf8mb4';
 
 $dsn = "mysql:host=$host;dbname=$db;charset=$charset";

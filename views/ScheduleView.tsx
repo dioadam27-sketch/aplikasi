@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Calendar, Trash2, Plus, AlertCircle, Check, Search, UserMinus, X, Building2, Clock, CalendarPlus, FileSpreadsheet, Upload, RefreshCw, Users, BookOpen, AlertTriangle, Lock, Unlock, ToggleLeft, ToggleRight, Edit2, ChevronDown, CheckCircle, ArrowUpDown, Save } from 'lucide-react';
+import { Calendar, Trash2, Plus, AlertCircle, Check, Search, UserMinus, X, Building2, Clock, CalendarPlus, FileSpreadsheet, Upload, RefreshCw, Users, BookOpen, AlertTriangle, Lock, Unlock, ToggleLeft, ToggleRight, Edit2, ChevronDown, CheckCircle, ArrowUpDown, Save, Layers } from 'lucide-react';
 import { Course, Lecturer, Room, ScheduleItem, DayOfWeek, TIME_SLOTS, ClassName } from '../types';
 import * as XLSX from 'xlsx';
 
@@ -14,9 +14,9 @@ interface ScheduleViewProps {
   onEditSchedule?: (item: ScheduleItem) => void;
   onDeleteSchedule?: (id: string) => void;
   onImportSchedule?: (items: ScheduleItem[]) => void;
+  onClearSchedule?: () => void;
   onSync?: () => void;
-  isLocked?: boolean;
-  onToggleLock?: () => void;
+  onLockAll?: (isLocked: boolean) => void;
 }
 
 // --- INTERNAL COMPONENT: SEARCHABLE SELECT ---
@@ -234,7 +234,7 @@ const EditForm = ({
 };
 
 const ScheduleView: React.FC<ScheduleViewProps> = ({
-  courses, lecturers, rooms, classNames, schedule, setSchedule, onAddSchedule, onEditSchedule, onDeleteSchedule, onImportSchedule, onSync, isLocked = false, onToggleLock
+  courses, lecturers, rooms, classNames, schedule, setSchedule, onAddSchedule, onEditSchedule, onDeleteSchedule, onImportSchedule, onClearSchedule, onSync, onLockAll
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -253,6 +253,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Edit Modal State
   const [editModal, setEditModal] = useState<{
@@ -282,11 +283,18 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
-    itemId: string | null;
+    item: ScheduleItem | null;
+    duplicateCount: number;
+    allIds: string[];
   }>({
     isOpen: false,
-    itemId: null
+    item: null,
+    duplicateCount: 0,
+    allIds: []
   });
+
+  // Clear All Modal
+  const [clearAllModal, setClearAllModal] = useState(false);
 
   const getCourse = (id: string) => courses.find(c => c.id === id);
   const getCourseName = (id: string) => getCourse(id)?.name || id;
@@ -313,6 +321,38 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
     .map(c => ({ value: c.name, label: c.name }))
     .sort((a, b) => a.label.localeCompare(b.label)), 
   [classNames]);
+
+  // --- SMART DEDUPLICATION FOR ADMIN VIEW ---
+  // Groups duplicates so Admin sees a clean list, but can operate on all duplicates.
+  const groupedSchedule = useMemo(() => {
+    const groups = new Map<string, { item: ScheduleItem, ids: string[] }>();
+    
+    schedule.forEach(item => {
+        // Robust Key Generation: Trim values to handle messy input (e.g. "SENIN " vs "SENIN")
+        const cId = String(item.courseId || '').trim();
+        const cName = String(item.className || '').trim();
+        const cDay = String(item.day || '').trim().toUpperCase();
+        const cTime = String(item.timeSlot || '').trim();
+        const cRoom = String(item.roomId || '').trim();
+
+        const key = `${cId}-${cName}-${cDay}-${cTime}-${cRoom}`;
+        
+        if (!groups.has(key)) {
+            groups.set(key, { item: item, ids: [item.id] });
+        } else {
+            const entry = groups.get(key)!;
+            entry.ids.push(item.id);
+            
+            // Prefer item with lecturers assigned if current has none
+            if ((!entry.item.lecturerIds || entry.item.lecturerIds.length === 0) && (item.lecturerIds && item.lecturerIds.length > 0)) {
+                entry.item = item;
+            }
+        }
+    });
+
+    return Array.from(groups.values()).map(g => ({ ...g.item, _duplicateIds: g.ids }));
+  }, [schedule]);
+
 
   // --- CONFLICT LOGIC (Used for Add) ---
   const currentConflicts = useMemo(() => {
@@ -427,14 +467,17 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
       roomId: selectedRoomId,
       className: selectedClassName,
       day: selectedDay as DayOfWeek,
-      timeSlot: selectedTime
+      timeSlot: selectedTime,
+      isLocked: false
     };
 
+    // UPDATE UI IMMEDIATELY (OPTIMISTIC)
+    setSchedule([...schedule, newItem]);
+
+    // SEND TO SERVER
     if (onAddSchedule) {
         onAddSchedule(newItem);
-    } else {
-        setSchedule([...schedule, newItem]);
-    }
+    } 
 
     // Reset Form
     setSelectedCourseId('');
@@ -537,35 +580,90 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
       setEditModal({ ...editModal, isOpen: false });
   };
 
-  const handleDeleteClick = (id: string) => {
-    setDeleteModal({ isOpen: true, itemId: id });
+  // --- GLOBAL LOCK LOGIC ---
+  const allLocked = schedule.length > 0 && schedule.every(s => s.isLocked);
+
+  const handleGlobalLock = async () => {
+      const newStatus = !allLocked;
+      const updatedSchedule = schedule.map(s => ({ ...s, isLocked: newStatus }));
+      
+      // Optimistic UI update
+      setSchedule(updatedSchedule);
+      setToast({ message: `Semua jadwal ${newStatus ? 'DIKUNCI' : 'DIBUKA'}`, type: 'success' });
+
+      // Call API (BULK UPDATE)
+      if (onLockAll) {
+          onLockAll(newStatus);
+      }
+      
+      setTimeout(() => setToast(null), 3000);
   };
 
-  const confirmDelete = () => {
-    if (deleteModal.itemId) {
-        if (onDeleteSchedule) {
-            onDeleteSchedule(deleteModal.itemId);
-        } else {
-            setSchedule(schedule.filter(s => s.id !== deleteModal.itemId));
+  // --- DELETE WITH DUPLICATE DETECTION ---
+  const handleDeleteClick = (item: any) => {
+    // Check for duplicates in the original schedule
+    const ids = item._duplicateIds || [item.id];
+    setDeleteModal({ 
+        isOpen: true, 
+        item: item,
+        duplicateCount: ids.length,
+        allIds: ids
+    });
+  };
+
+  const confirmDelete = async () => {
+    const { allIds } = deleteModal;
+    if (allIds.length === 0) return;
+
+    setIsDeleting(true);
+
+    // 1. Optimistic Update (Immediate Feedback)
+    // Remove from local state immediately so user sees them gone
+    setSchedule(schedule.filter(s => !allIds.includes(s.id)));
+    
+    // Close modal immediately
+    setDeleteModal({ isOpen: false, item: null, duplicateCount: 0, allIds: [] });
+    setToast({ message: `${allIds.length} jadwal berhasil dihapus.`, type: 'success' });
+
+    // 2. Perform API Calls in Background
+    if (onDeleteSchedule) {
+        // Sequentially delete to avoid overwhelming browser/backend limits
+        for (const id of allIds) {
+            await new Promise(resolve => setTimeout(resolve, 50)); // Small throttle
+            onDeleteSchedule(id);
+        }
+        
+        // 3. Final Sync (Optional, handled by parent usually but good to ensure consistency)
+        if (onSync) {
+            setTimeout(onSync, 2000); // Sync after a delay
         }
     }
-    setDeleteModal({ isOpen: false, itemId: null });
+    
+    setIsDeleting(false);
+    setTimeout(() => setToast(null), 3000);
   };
 
-  const handleLockToggle = () => {
-    if (onToggleLock) {
-        onToggleLock();
-        const msg = !isLocked 
-            ? 'Sistem Penjadwalan BERHASIL DIKUNCI. Dosen tidak dapat mengubah jadwal.' 
-            : 'Sistem Penjadwalan BERHASIL DIBUKA. Dosen dapat mengakses kembali.';
-        setToast({ message: msg, type: 'success' });
-        setTimeout(() => setToast(null), 4000);
-    }
+  // --- CLEAR ALL SCHEDULE LOGIC ---
+  const handleClearAll = async () => {
+      setIsDeleting(true);
+      setClearAllModal(false);
+      
+      // Optimistic
+      setSchedule([]);
+      setToast({ message: 'Seluruh jadwal berhasil dihapus.', type: 'success' });
+
+      if (onClearSchedule) {
+          await onClearSchedule();
+          if (onSync) setTimeout(onSync, 1000);
+      }
+      
+      setIsDeleting(false);
+      setTimeout(() => setToast(null), 3000);
   };
 
   const exportScheduleExcel = () => {
-    if (schedule.length === 0) return;
-    const excelData = schedule.map(s => {
+    if (groupedSchedule.length === 0) return;
+    const excelData = groupedSchedule.map(s => {
       const course = getCourse(s.courseId);
       const room = rooms.find(r => r.id === s.roomId);
       const lecturerNames = (s.lecturerIds || []).map(id => getLecturerName(id)).join(', ');
@@ -576,7 +674,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
         "Mata Kuliah": course?.name || s.courseId,
         "Kode MK": course?.code || '-',
         "Dosen": lecturerNames || 'Open Slot',
-        "Ruangan": room?.name || s.roomId
+        "Ruangan": room?.name || s.roomId,
+        "Status": s.isLocked ? 'Terkunci' : 'Aktif'
       };
     });
     const worksheet = XLSX.utils.json_to_sheet(excelData);
@@ -611,7 +710,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                className: String(className),
                courseId: course.id,
                lecturerIds: [],
-               roomId: room.id
+               roomId: room.id,
+               isLocked: false
              });
           }
         });
@@ -623,45 +723,40 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
     reader.readAsBinaryString(file);
   };
 
-  const itemToDelete = deleteModal.itemId ? schedule.find(s => s.id === deleteModal.itemId) : null;
   const isPopover = Object.keys(popoverStyle).length > 0;
 
   return (
     <div ref={containerRef} className="space-y-8 relative animate-fade-in pb-10">
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-24 right-6 z-[100] bg-slate-800 text-white px-6 py-4 rounded-xl shadow-2xl animate-slide-down flex items-center gap-4 border border-slate-700">
-            <div className="bg-emerald-500/20 p-2 rounded-full">
-                <CheckCircle className="text-emerald-400" size={24} />
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-slate-800 text-white px-5 py-3 rounded-xl shadow-2xl animate-slide-down flex items-center gap-4 max-w-md">
+            <div className="bg-green-500 p-2 rounded-full flex-shrink-0">
+                <Check className="text-white" size={20} strokeWidth={3} />
             </div>
-            <div>
+            <div className="flex-1">
                 <h4 className="font-bold text-sm text-white">Notifikasi Sistem</h4>
                 <p className="text-xs text-slate-300 mt-0.5">{toast.message}</p>
             </div>
-            <button onClick={() => setToast(null)} className="ml-2 text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+            <button onClick={() => setToast(null)} className="p-1 text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
         </div>
       )}
 
-      {/* Header and Actions (Sync, Import, Export) */}
+      {/* Header and Actions */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-2xl font-bold text-slate-800">Penjadwalan Kuliah</h2>
-          <div className="flex items-center gap-2 text-sm">
+          <h2 className="text-3xl font-black text-slate-800">Penjadwalan Kuliah</h2>
+          <div className="flex items-center gap-3 text-sm">
              <span className="text-slate-500">Kelola jadwal kuliah per sesi.</span>
-             <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold border ${isLocked ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-                {isLocked ? <Lock size={10} /> : <Unlock size={10} />}
-                {isLocked ? 'STATUS: TERKUNCI' : 'STATUS: TERBUKA'}
-             </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap gap-3 w-full sm:w-auto items-center">
           {/* SORT CONTROL */}
-          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm h-[42px]">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline"><ArrowUpDown size={12} className="inline mr-1"/>Urutkan:</span>
+          <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-slate-200 h-[46px]">
+              <span className="text-sm font-medium text-slate-500 uppercase flex items-center gap-1"><ArrowUpDown size={14} /> Urutkan:</span>
               <select 
                   value={sortBy} 
                   onChange={(e) => setSortBy(e.target.value as any)} 
-                  className="text-sm font-bold text-slate-700 bg-transparent outline-none cursor-pointer"
+                  className="text-sm font-bold text-slate-800 bg-transparent outline-none cursor-pointer"
               >
                   <option value="time">Waktu</option>
                   <option value="course">Mata Kuliah</option>
@@ -670,29 +765,28 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
               </select>
           </div>
 
-          {onToggleLock && (
-             <button 
-                onClick={handleLockToggle} 
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border shadow-sm transition-all active:scale-95 group ${
-                    isLocked 
-                    ? 'bg-red-600 text-white border-red-700 hover:bg-red-700 shadow-red-200' 
-                    : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
-                }`}
-             >
-                {isLocked ? <ToggleRight size={22} className="text-white" /> : <ToggleLeft size={22} />}
-                {isLocked ? 'Buka Jadwal' : 'Kunci Jadwal'}
-             </button>
+          {/* GLOBAL LOCK BUTTON */}
+          {onEditSchedule && schedule.length > 0 && (
+              <button 
+                onClick={handleGlobalLock}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border font-bold text-sm transition-all active:scale-95 h-[46px] ${allLocked ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100'}`}
+                title={allLocked ? "Buka Semua Jadwal" : "Kunci Semua Jadwal"}
+              >
+                  {allLocked ? <Unlock size={18} /> : <Lock size={18} />} 
+                  <span className="hidden sm:inline">{allLocked ? 'Buka Semua' : 'Kunci Semua'}</span>
+              </button>
           )}
-          {onSync && (
-            <button onClick={onSync} className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-600 px-4 py-2.5 rounded-xl font-bold text-sm border border-slate-200 shadow-sm"><RefreshCw size={18} /> Sync</button>
+
+          {/* CLEAR ALL BUTTON */}
+          {onClearSchedule && (
+              <button 
+                onClick={() => setClearAllModal(true)}
+                className="flex items-center gap-2 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 px-4 py-2.5 rounded-xl border border-red-100 font-bold text-sm transition-all active:scale-95 h-[46px]"
+                title="Hapus Semua Jadwal"
+              >
+                  <Trash2 size={18} /> <span className="hidden sm:inline">Hapus Semua</span>
+              </button>
           )}
-          {onImportSchedule && (
-            <>
-              <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".xlsx, .xls" className="hidden" />
-              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-4 py-2.5 rounded-xl font-bold text-sm border border-indigo-200 shadow-sm"><Upload size={18} /> Import</button>
-            </>
-          )}
-          <button onClick={exportScheduleExcel} disabled={schedule.length === 0} className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2.5 rounded-xl font-bold text-sm border border-emerald-200 shadow-sm disabled:opacity-50"><FileSpreadsheet size={18} /> Export</button>
         </div>
       </div>
 
@@ -803,27 +897,12 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
         )}
       </div>
 
-      {errorMsg && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-2 animate-shake">
-          <AlertCircle size={20} />
-          <span className="text-sm font-medium">{errorMsg}</span>
-        </div>
-      )}
-
-      {successMsg && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl flex items-center gap-2">
-          <Check size={20} />
-          <span className="text-sm font-medium">{successMsg}</span>
-        </div>
-      )}
-
-      {/* Schedule List */}
+      {/* Schedule List - USING GROUPED SCHEDULE */}
       <div className="space-y-8">
         {(Object.values(DayOfWeek) as string[]).map((day) => {
-          const dayItems = schedule
-            .filter((s) => s.day === day)
+          const dayItems = groupedSchedule // USE GROUPED DATA HERE
+            .filter((s) => String(s.day || '').trim().toUpperCase() === String(day).toUpperCase()) // ROBUST FILTER
             .sort((a, b) => {
-               // --- SORTING LOGIC ---
                if (sortBy === 'course') {
                    const cmp = getCourseName(a.courseId).localeCompare(getCourseName(b.courseId));
                    if (cmp !== 0) return cmp;
@@ -835,11 +914,9 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                    if (cmp !== 0) return cmp;
                }
                
-               // Default Secondary Sort: Time
                const timeCompare = TIME_SLOTS.indexOf(a.timeSlot) - TIME_SLOTS.indexOf(b.timeSlot);
                if (timeCompare !== 0) return timeCompare;
                
-               // Tertiary: Course Name
                const nameA = getCourseName(a.courseId).toLowerCase();
                const nameB = getCourseName(b.courseId).toLowerCase();
                const courseCompare = nameA.localeCompare(nameB);
@@ -859,26 +936,51 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                       <div className="p-12 text-center text-slate-400 flex flex-col items-center gap-2"><Calendar className="opacity-20" size={48} /><span className="text-sm">Kosong.</span></div>
                    ) : (
                       dayItems.map(item => (
-                        <div key={item.id} className="p-5 hover:bg-slate-50 transition-colors flex flex-col md:flex-row md:items-center gap-4 group">
+                        <div key={item.id} className={`p-5 hover:bg-slate-50 transition-colors flex flex-col md:flex-row md:items-center gap-4 group ${item.isLocked ? 'bg-slate-50/50' : ''}`}>
                            <div className="md:w-1/4 flex items-start gap-4">
-                              <div className="bg-blue-50 text-blue-700 p-2.5 rounded-xl font-bold text-xs text-center min-w-[80px]"><Clock size={16} className="mx-auto mb-1 opacity-70"/>{item.timeSlot}</div>
-                              <div><div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Kelas</div><div className="text-lg font-black text-slate-800">{item.className}</div></div>
+                              <div className={`p-2.5 rounded-xl font-bold text-xs text-center min-w-[80px] ${item.isLocked ? 'bg-slate-200 text-slate-500' : 'bg-blue-50 text-blue-700'}`}>
+                                  <Clock size={16} className="mx-auto mb-1 opacity-70"/>{item.timeSlot}
+                              </div>
+                              <div>
+                                <div className="text-[10px] text-slate-400 font-bold uppercase mb-1">Kelas</div>
+                                <div className="flex items-center gap-2">
+                                    <div className="text-lg font-black text-slate-800">{item.className}</div>
+                                    {/* DUPLICATE BADGE */}
+                                    {item._duplicateIds && item._duplicateIds.length > 1 && (
+                                        <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded border border-red-200 flex items-center gap-1">
+                                            <Layers size={8} /> {item._duplicateIds.length}X Duplikat
+                                        </span>
+                                    )}
+                                </div>
+                              </div>
                            </div>
                            <div className="md:w-1/3">
-                              <div className="flex items-center gap-2 mb-1"><BookOpen size={14} className="text-slate-400" /><span className="font-bold text-slate-800 text-sm line-clamp-1">{getCourseName(item.courseId)}</span></div>
-                              <div className="flex items-center gap-2 text-xs text-slate-500"><Building2 size={12}/><span>Ruang <span className="font-bold text-slate-700">{getRoomName(item.roomId)}</span></span></div>
+                              <div className="flex items-center gap-2 mb-1">
+                                  <BookOpen size={14} className="text-slate-400" />
+                                  <span className="font-bold text-slate-800 text-sm line-clamp-1">{getCourseName(item.courseId)}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-slate-500">
+                                  <Building2 size={12}/>
+                                  <span>Ruang <span className="font-bold text-slate-700">{getRoomName(item.roomId)}</span></span>
+                              </div>
                            </div>
                            <div className="md:flex-1">
                               <div className="flex flex-col gap-1">
-                                {(item.lecturerIds || []).length > 0 ? (
-                                  (item.lecturerIds || []).map(lid => (
-                                    <div key={lid} className="flex items-center gap-2 text-sm text-slate-600">
-                                      <Users size={14} className={lid === item.pjmkLecturerId ? "text-amber-500" : "text-slate-400"} />
-                                      <span className={lid === item.pjmkLecturerId ? "font-semibold text-slate-800" : ""}>{getLecturerName(lid)}</span>
+                                {item.isLocked ? (
+                                    <div className="flex items-center gap-2 text-red-500 text-xs font-bold border border-red-200 bg-red-50 w-fit px-2 py-1 rounded">
+                                        <Lock size={12} /> JADWAL DIKUNCI
                                     </div>
-                                  ))
                                 ) : (
-                                  <div className="flex items-center gap-2 text-amber-600 italic text-sm"><UserMinus size={16} /> Open Slot</div>
+                                    (item.lecturerIds || []).length > 0 ? (
+                                    (item.lecturerIds || []).map(lid => (
+                                        <div key={lid} className="flex items-center gap-2 text-sm text-slate-600">
+                                        <Users size={14} className={lid === item.pjmkLecturerId ? "text-amber-500" : "text-slate-400"} />
+                                        <span className={lid === item.pjmkLecturerId ? "font-semibold text-slate-800" : ""}>{getLecturerName(lid)}</span>
+                                        </div>
+                                    ))
+                                    ) : (
+                                    <div className="flex items-center gap-2 text-amber-600 italic text-sm"><UserMinus size={16} /> Open Slot</div>
+                                    )
                                 )}
                               </div>
                            </div>
@@ -888,7 +990,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                                     <Edit2 size={18} />
                                 </button>
                               )}
-                              <button onClick={() => handleDeleteClick(item.id)} className="p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={18}/></button>
+                              <button onClick={() => handleDeleteClick(item)} className="p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={18}/></button>
                            </div>
                         </div>
                       ))
@@ -905,7 +1007,6 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
             {/* Backdrop */}
             <div className={`fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm animate-fade-in ${isPopover ? 'cursor-default' : 'flex items-center justify-center'}`} onClick={() => setEditModal({...editModal, isOpen: false})}>
                 
-                {/* Fallback Fixed Modal for Mobile */}
                 {!isPopover && (
                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl relative z-10 overflow-hidden animate-slide-down border border-slate-100 mx-4" onClick={e => e.stopPropagation()}>
                         <EditForm 
@@ -927,7 +1028,6 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                 )}
             </div>
 
-            {/* Popover Absolute Modal for Desktop (Scrolls with container) */}
             {isPopover && (
                 <div 
                    className="absolute bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-slide-down border border-slate-100"
@@ -953,7 +1053,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
         </>
       )}
 
-      {deleteModal.isOpen && itemToDelete && (
+      {deleteModal.isOpen && deleteModal.item && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })}></div>
            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm relative z-10 overflow-hidden animate-slide-down">
@@ -962,11 +1062,47 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
                  <button onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })} className="text-slate-400"><X size={24} /></button>
               </div>
               <div className="p-8">
-                <p className="text-slate-600 text-sm">Hapus jadwal <strong>{getCourseName(itemToDelete.courseId)}</strong> untuk kelas <span className="bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-800">{itemToDelete.className}</span>?</p>
+                <p className="text-slate-600 text-sm mb-4">Hapus jadwal <strong>{getCourseName(deleteModal.item.courseId)}</strong> untuk kelas <span className="bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-800">{deleteModal.item.className}</span>?</p>
+                
+                {deleteModal.duplicateCount > 1 && (
+                    <div className="bg-red-100 text-red-800 text-xs p-3 rounded-lg border border-red-200">
+                        <strong>PERHATIAN:</strong> Ditemukan <strong>{deleteModal.duplicateCount}</strong> data duplikat (kembar) untuk jadwal ini. Menghapus satu akan menghapus semuanya sekaligus.
+                    </div>
+                )}
               </div>
               <div className="p-6 bg-slate-50 flex gap-4 border-t border-slate-100">
-                 <button onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })} className="flex-1 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm">Batal</button>
-                 <button onClick={confirmDelete} className="flex-1 px-4 py-3 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm">Hapus</button>
+                 <button onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })} className="flex-1 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm" disabled={isDeleting}>Batal</button>
+                 <button onClick={confirmDelete} className="flex-1 px-4 py-3 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm disabled:opacity-50" disabled={isDeleting}>
+                    {isDeleting ? 'Menghapus...' : (deleteModal.duplicateCount > 1 ? 'Hapus Semua' : 'Hapus')}
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* CLEAR ALL CONFIRMATION MODAL */}
+      {clearAllModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setClearAllModal(false)}></div>
+           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md relative z-10 overflow-hidden animate-slide-down border-4 border-red-100">
+              <div className="bg-red-50 p-6 flex flex-col items-center text-center border-b border-red-100">
+                 <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4 text-red-600 shadow-sm border border-red-200">
+                    <Trash2 size={32} />
+                 </div>
+                 <h3 className="text-xl font-black text-slate-800">HAPUS SEMUA JADWAL?</h3>
+                 <p className="text-red-600 text-sm font-bold mt-2 bg-red-100 px-3 py-1 rounded-full">TINDAKAN BERBAHAYA</p>
+              </div>
+              <div className="p-8">
+                <p className="text-slate-600 text-sm leading-relaxed text-center">
+                    Anda akan menghapus <strong>SELURUH DATA JADWAL</strong> yang ada di sistem. <br/><br/>
+                    Data yang dihapus <strong>TIDAK DAPAT DIKEMBALIKAN</strong>. Pastikan Anda sudah melakukan backup (Export Excel) terlebih dahulu.
+                </p>
+              </div>
+              <div className="p-6 bg-slate-50 flex gap-4 border-t border-slate-100">
+                 <button onClick={() => setClearAllModal(false)} className="flex-1 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm bg-white border border-slate-200 hover:bg-slate-100" disabled={isDeleting}>Batalkan</button>
+                 <button onClick={handleClearAll} className="flex-1 px-4 py-3 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm shadow-lg shadow-red-200 active:scale-95 transition-all" disabled={isDeleting}>
+                    {isDeleting ? 'Menghapus...' : 'Ya, Hapus Semuanya'}
+                 </button>
               </div>
            </div>
         </div>

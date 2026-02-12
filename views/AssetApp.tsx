@@ -284,6 +284,7 @@ const AssetApp = ({ onBack }: { onBack: () => void }) => {
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:border-[#FFC700] focus:ring-1 focus:ring-[#FFC700] outline-none transition-all placeholder:text-slate-400"
                     placeholder="Password"
                     autoFocus
+                    autoComplete="new-password"
                   />
                   {authError && (
                     <p className="text-rose-500 text-xs font-bold px-1">{authError}</p>

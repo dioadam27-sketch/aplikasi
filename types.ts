@@ -1,44 +1,4 @@
 
-export enum ArchiveCategory {
-  SK = 'SK Rektor',
-  SURAT_TUGAS = 'Surat Tugas',
-  AKADEMIK = 'Dokumen Akademik',
-  LAPORAN = 'Laporan Kegiatan',
-  LAINNYA = 'Lainnya'
-}
-
-export interface Folder {
-  id: string;
-  label: string;
-  parentId?: string | null;
-  visibility?: 'public' | 'private';
-}
-
-export interface ArchiveDocument {
-  id: string;
-  nomorDokumen: string;
-  judul: string;
-  deskripsi: string;
-  kategori: string; 
-  tahun: string;
-  tanggalUpload?: string;
-  tags: string[];
-  fileSize?: string;
-  fileUrl?: string; 
-  folderId?: string;
-  visibility?: 'public' | 'private';
-}
-
-export interface AIParsedData {
-  nomor_dokumen?: string;
-  judul: string;
-  kategori: string;
-  tahun: string;
-  deskripsi: string;
-  tags?: string[];
-}
-
-// SIMPDB Types
 export enum DayOfWeek {
   SENIN = 'SENIN',
   SELASA = 'SELASA',
@@ -95,6 +55,7 @@ export interface ScheduleItem {
   className: string;
   day: DayOfWeek;
   timeSlot: string;
+  isLocked?: boolean; // New Field: Status Kunci Admin
 }
 
 export interface TeachingLog {
@@ -120,4 +81,44 @@ export interface AppSetting {
   id: string;
   key: string;
   value: string;
+}
+
+// --- Arsip Types ---
+export enum ArchiveCategory {
+  SK = 'SK Rektor',
+  SURAT_TUGAS = 'Surat Tugas',
+  AKADEMIK = 'Dokumen Akademik',
+  LAPORAN = 'Laporan Kegiatan',
+  LAINNYA = 'Lainnya'
+}
+
+export interface Folder {
+  id: string;
+  label: string;
+  parentId?: string | null;
+  visibility?: 'public' | 'private';
+}
+
+export interface ArchiveDocument {
+  id: string;
+  nomorDokumen: string;
+  judul: string;
+  deskripsi: string;
+  kategori: string; 
+  tahun: string;
+  tanggalUpload?: string;
+  tags: string[];
+  fileSize?: string;
+  fileUrl?: string; 
+  folderId?: string;
+  visibility?: 'public' | 'private';
+}
+
+export interface AIParsedData {
+  nomor_dokumen?: string;
+  judul: string;
+  kategori: string;
+  tahun: string;
+  deskripsi: string;
+  tags?: string[];
 }

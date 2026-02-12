@@ -92,6 +92,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
                   placeholder="Masukkan Password Admin"
                   disabled={isLoading || isGuestLoading}
                   required
+                  autoComplete="new-password"
                 />
               </div>
 
