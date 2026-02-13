@@ -9,11 +9,11 @@ interface PortalLandingProps {
 // Default Apps (Hardcoded logic)
 const defaultApps = [
   { id: 'simpdb', name: 'SIMPDB', desc: 'Sistem Informasi Manajemen Penjadwalan Kuliah & PDB', icon: LayoutDashboard, color: 'bg-blue-600', text: 'text-blue-600' },
-  { id: 'monev', name: 'Monev', desc: 'Monitoring & Evaluasi Kinerja Akademik', icon: BarChart3, color: 'bg-emerald-600', text: 'text-emerald-600' },
-  { id: 'asset', name: 'Helpdesk', desc: 'Pusat Bantuan & Layanan Teknis', icon: LifeBuoy, color: 'bg-orange-600', text: 'text-orange-600' },
+  { id: 'monev', name: 'Monev', desc: 'Monev pelaksanaan kuliah PDB', icon: BarChart3, color: 'bg-emerald-600', text: 'text-emerald-600' },
+  { id: 'asset', name: 'Helpdesk', desc: 'Portal Pelayanan Mahasiswa', icon: LifeBuoy, color: 'bg-orange-600', text: 'text-orange-600' },
   { id: 'hr', name: 'Ruang PDB', desc: 'Manajemen Penggunaan Ruang & Fasilitas', icon: Users, color: 'bg-purple-600', text: 'text-purple-600' },
   { id: 'academic', name: 'Repository', desc: 'Arsip Digital', icon: Archive, color: 'bg-pink-600', text: 'text-pink-600' },
-  { id: 'office', name: 'Kuesioner Mahasiswa', desc: 'Surat Menyurat Digital & Administrasi', icon: FileText, color: 'bg-slate-600', text: 'text-slate-600' },
+  { id: 'office', name: 'Kuesioner Mahasiswa', desc: 'Kuesioner evaluasi pembelajaran PDB oleh mahasiswa', icon: FileText, color: 'bg-slate-600', text: 'text-slate-600' },
   { id: 'workshop', name: 'Workshop PDB', desc: 'Pelatihan Dosen: Cybercampus & Hebat E-Learning', icon: MonitorPlay, color: 'bg-cyan-600', text: 'text-cyan-600' },
 ];
 
