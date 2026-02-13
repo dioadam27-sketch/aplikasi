@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Wallet, LifeBuoy, Users, Archive, FileText, ArrowRight, ExternalLink, Info, ChevronRight, LogOut, BarChart3, Lock, Unlock, X, Check, ToggleLeft, ToggleRight, Settings, AlertTriangle, MonitorPlay, Plus, Trash2, Link, Globe } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { LayoutDashboard, Wallet, LifeBuoy, Users, Archive, FileText, ArrowRight, ExternalLink, Info, ChevronRight, LogOut, BarChart3, Lock, Unlock, X, Check, ToggleLeft, ToggleRight, Settings, AlertTriangle, MonitorPlay, Plus, Trash2, Link as LinkIcon, Globe } from 'lucide-react';
 
 interface PortalLandingProps {
   onSelectApp: (appId: string) => void;
@@ -32,17 +33,9 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
   const mainBgImage = `url("https://pkkii.pendidikan.unair.ac.id/website/VB%206.png")`;
 
   // --- STATE ---
-  const [disabledApps, setDisabledApps] = useState<string[]>(() => {
-    try {
-        const saved = localStorage.getItem('pdb_portal_disabled_apps');
-        return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-        console.error("Error parsing disabled apps settings", e);
-        return [];
-    }
-  });
-  
+  const [disabledDefaultApps, setDisabledDefaultApps] = useState<string[]>([]);
   const [customApps, setCustomApps] = useState<CustomApp[]>([]);
+  
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
@@ -52,49 +45,53 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
   const [newApp, setNewApp] = useState({ name: '', description: '', url: '', color: 'bg-slate-600' });
   const [isSavingApp, setIsSavingApp] = useState(false);
 
-  // --- FETCH DATA ---
-  const fetchCustomApps = async () => {
+  // --- FETCH DATA (CONFIG & CUSTOM APPS) ---
+  const fetchPortalConfig = async () => {
       try {
-          const res = await fetch(`${API_URL}?action=fetch_portal_apps`);
+          const res = await fetch(`${API_URL}?action=fetch_portal_config`);
           if (res.ok) {
               const data = await res.json();
-              if (Array.isArray(data)) {
-                  setCustomApps(data);
+              
+              // 1. Set Custom Apps
+              if (Array.isArray(data.customApps)) {
+                  setCustomApps(data.customApps);
+              }
+              
+              // 2. Set Disabled Default Apps
+              if (Array.isArray(data.disabledDefaults)) {
+                  setDisabledDefaultApps(data.disabledDefaults);
               }
           }
       } catch (e) {
-          console.error("Failed to fetch custom apps", e);
+          console.error("Failed to fetch portal config", e);
       }
   };
 
   useEffect(() => {
-      fetchCustomApps();
+      fetchPortalConfig();
   }, []);
 
-  // --- MERGE APPS ---
-  const allApps = [
-      ...defaultApps,
+  // --- MERGE APPS FOR DISPLAY ---
+  const mergedDisplayApps = [
+      ...defaultApps.map(app => ({
+          ...app,
+          isExternal: false,
+          isActive: !disabledDefaultApps.includes(app.id) // Active if NOT in disabled list
+      })),
       ...customApps.map(app => ({
           ...app,
           icon: Globe, // Default icon for external apps
           text: app.color.replace('bg-', 'text-'), // Simple heuristic
-          isExternal: true
+          isExternal: true,
+          isActive: app.isActive // Direct from DB
       }))
   ];
 
   // --- HANDLERS ---
 
-  const handleAppClick = (app: any) => {
-    if (disabledApps.includes(app.id)) {
-        alert("Aplikasi sedang dalam perbaikan (Maintenance). Silakan coba lagi nanti.");
-        return;
-    }
-    
-    if (app.isExternal) {
-        window.open(app.url, '_blank');
-    } else {
-        onSelectApp(app.id);
-    }
+  const handleMaintenanceClick = (e: React.MouseEvent) => {
+      e.preventDefault();
+      alert("Aplikasi sedang dalam perbaikan (Maintenance). Silakan coba lagi nanti.");
   };
 
   const handleAdminLogin = (e: React.FormEvent) => {
@@ -104,23 +101,51 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
         setShowSettingsModal(true);
         setAdminPassword('');
         setLoginError('');
-        fetchCustomApps(); // Refresh when opening admin
+        fetchPortalConfig(); // Refresh when opening admin
     } else {
         setLoginError('Password salah!');
     }
   };
 
-  const toggleAppStatus = (appId: string) => {
-    setDisabledApps(prev => {
-        let newStatus;
-        if (prev.includes(appId)) {
-            newStatus = prev.filter(id => id !== appId); // Enable
-        } else {
-            newStatus = [...prev, appId]; // Disable
+  const toggleAppStatus = async (app: any) => {
+    if (app.isExternal) {
+        // CASE 1: CUSTOM APP (Update 'portal_apps' table)
+        const newStatus = !app.isActive;
+        // Optimistic UI Update
+        setCustomApps(prev => prev.map(a => a.id === app.id ? { ...a, isActive: newStatus } : a));
+
+        try {
+            await fetch(`${API_URL}?action=toggle_custom_app`, {
+                method: 'POST',
+                body: JSON.stringify({ id: app.id, isActive: newStatus })
+            });
+        } catch (e) {
+            alert("Gagal mengubah status. Periksa koneksi.");
+            fetchPortalConfig(); // Revert
         }
-        localStorage.setItem('pdb_portal_disabled_apps', JSON.stringify(newStatus));
-        return newStatus;
-    });
+
+    } else {
+        // CASE 2: DEFAULT APP (Update 'settings' table -> disabled_default_apps)
+        let newDisabledList;
+        if (disabledDefaultApps.includes(app.id)) {
+            newDisabledList = disabledDefaultApps.filter(id => id !== app.id); // Enable (Remove from disabled)
+        } else {
+            newDisabledList = [...disabledDefaultApps, app.id]; // Disable (Add to disabled)
+        }
+        
+        // Optimistic UI Update
+        setDisabledDefaultApps(newDisabledList);
+
+        try {
+            await fetch(`${API_URL}?action=save_disabled_defaults`, {
+                method: 'POST',
+                body: JSON.stringify({ disabledIds: newDisabledList })
+            });
+        } catch (e) {
+            alert("Gagal menyimpan pengaturan.");
+            fetchPortalConfig(); // Revert
+        }
+    }
   };
 
   // --- CUSTOM APP MANAGEMENT ---
@@ -152,7 +177,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
           });
           
           if (res.ok) {
-              setCustomApps([...customApps, payload]);
+              setCustomApps([...customApps, payload]); // isActive defaults to 1/true
               setNewApp({ name: '', description: '', url: '', color: 'bg-slate-600' });
           } else {
               alert("Gagal menyimpan aplikasi.");
@@ -184,6 +209,45 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
           setCustomApps(prevApps);
           alert("Gagal menghapus.");
       }
+  };
+
+  // Render Component for App Item (Button or Link)
+  const AppItem = ({ app, className, children }: any) => {
+      const isDisabled = !app.isActive;
+      
+      // 1. Jika Disabled -> Render div/button dengan alert
+      if (isDisabled) {
+          return (
+              <button 
+                  onClick={handleMaintenanceClick} 
+                  className={className}
+                  title="Maintenance"
+              >
+                  {children}
+              </button>
+          );
+      }
+
+      // 2. Jika External -> Render <a> tag biasa
+      if (app.isExternal) {
+          return (
+              <a 
+                  href={app.url} 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className={className}
+              >
+                  {children}
+              </a>
+          );
+      }
+
+      // 3. Jika Internal -> Render <Link> dari React Router
+      return (
+          <Link to={`/${app.id}`} className={className}>
+              {children}
+          </Link>
+      );
   };
 
   return (
@@ -293,9 +357,10 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                     <div>
                         <h4 className="font-bold text-slate-800 mb-4">Daftar Aplikasi</h4>
                         <div className="space-y-2">
-                            {allApps.map(app => {
-                                const isDisabled = disabledApps.includes(app.id);
-                                const isCustom = (app as any).isExternal;
+                            {mergedDisplayApps.map(app => {
+                                const isDisabled = !app.isActive; // Inverted logic for display
+                                const isCustom = app.isExternal;
+                                
                                 return (
                                     <div key={app.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-slate-50">
                                         <div className="flex items-center gap-3">
@@ -315,7 +380,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                                         
                                         <div className="flex gap-2">
                                             <button 
-                                                onClick={() => toggleAppStatus(app.id)}
+                                                onClick={() => toggleAppStatus(app)}
                                                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDisabled ? 'bg-slate-300' : 'bg-green-500'}`}
                                             >
                                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDisabled ? 'translate-x-1' : 'translate-x-6'}`} />
@@ -374,14 +439,13 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
 
         <nav className="relative z-10 flex-1 py-6 overflow-y-auto overflow-x-hidden custom-scrollbar">
             <div className="px-3 space-y-1">
-                {allApps.map((app) => {
-                    const isDisabled = disabledApps.includes(app.id);
+                {mergedDisplayApps.map((app) => {
+                    const isDisabled = !app.isActive;
                     return (
-                        <button
+                        <AppItem
                             key={app.id}
-                            onClick={() => handleAppClick(app)}
+                            app={app}
                             className={`w-full flex items-center px-2 py-3 rounded-xl transition-colors group/item relative ${isDisabled ? 'opacity-50 grayscale hover:bg-white/5 cursor-not-allowed' : 'hover:bg-white/10'}`}
-                            title={app.name}
                         >
                             <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${app.color} text-white shadow-lg shadow-black/20 group-hover/item:scale-110 transition-transform`}>
                                 <app.icon size={20} />
@@ -394,7 +458,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                             </div>
                             {!isDisabled && <ChevronRight size={14} className="text-white/50 opacity-0 md:group-hover:opacity-100 md:-translate-x-2 md:group-hover:translate-x-0 transition-all duration-300" />}
                             {isDisabled && <Lock size={14} className="text-white/50 opacity-0 md:group-hover:opacity-100 ml-auto mr-2" />}
-                        </button>
+                        </AppItem>
                     );
                 })}
             </div>
@@ -450,14 +514,14 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {allApps.map((app) => {
-                        const isDisabled = disabledApps.includes(app.id);
-                        const isCustom = (app as any).isExternal;
+                    {mergedDisplayApps.map((app) => {
+                        const isDisabled = !app.isActive;
+                        const isCustom = app.isExternal;
                         
                         return (
-                            <button 
+                            <AppItem 
                                 key={app.id}
-                                onClick={() => handleAppClick(app)}
+                                app={app}
                                 className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex flex-col h-full relative overflow-hidden text-left group
                                     ${isDisabled ? 'cursor-not-allowed opacity-80' : 'hover:shadow-xl hover:-translate-y-1 transition-all duration-300'}
                                 `}
@@ -481,7 +545,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                                     <div className="flex gap-1">
                                         {isCustom && (
                                             <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300" title="Link Eksternal">
-                                                <Link size={14} />
+                                                <LinkIcon size={14} />
                                             </div>
                                         )}
                                         <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 group-hover:bg-[#003B73]/10 group-hover:text-[#003B73] transition-colors">
@@ -502,7 +566,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
                                         </span>
                                     </div>
                                 </div>
-                            </button>
+                            </AppItem>
                         );
                     })}
                 </div>

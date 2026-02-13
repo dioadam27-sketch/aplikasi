@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import PortalLanding from './views/PortalLanding';
 import SimpdbApp from './views/SimpdbApp';
 import MonevApp from './views/MonevApp';
@@ -9,34 +10,28 @@ import OfficeApp from './views/OfficeApp';
 import WorkshopApp from './views/WorkshopApp';
 
 const App: React.FC = () => {
-  const [currentApp, setCurrentApp] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  // Render Portal if no app is selected
-  if (!currentApp) {
-    return <PortalLanding onSelectApp={setCurrentApp} />;
-  }
+  // Helper untuk kembali ke halaman utama
+  const goBack = () => navigate('/');
 
-  const goBack = () => setCurrentApp(null);
+  return (
+    <Routes>
+      <Route path="/" element={<PortalLanding onSelectApp={(id) => navigate(`/${id}`)} />} />
+      
+      {/* Route Aplikasi Internal */}
+      <Route path="/simpdb/*" element={<SimpdbApp onBackToPortal={goBack} />} />
+      <Route path="/monev/*" element={<MonevApp onBack={goBack} />} />
+      <Route path="/asset/*" element={<AssetApp onBack={goBack} />} />
+      <Route path="/hr/*" element={<HRApp onBack={goBack} />} />
+      <Route path="/academic/*" element={<AcademicApp onBack={goBack} />} />
+      <Route path="/office/*" element={<OfficeApp onBack={goBack} />} />
+      <Route path="/workshop/*" element={<WorkshopApp onBack={goBack} />} />
 
-  // Router Switch
-  switch (currentApp) {
-    case 'simpdb':
-      return <SimpdbApp onBackToPortal={goBack} />;
-    case 'monev': // Replaces finance
-      return <MonevApp onBack={goBack} />;
-    case 'asset':
-      return <AssetApp onBack={goBack} />;
-    case 'hr':
-      return <HRApp onBack={goBack} />;
-    case 'academic':
-      return <AcademicApp onBack={goBack} />;
-    case 'office':
-      return <OfficeApp onBack={goBack} />;
-    case 'workshop':
-      return <WorkshopApp onBack={goBack} />;
-    default:
-      return <PortalLanding onSelectApp={setCurrentApp} />;
-  }
+      {/* Fallback untuk route yang tidak dikenal */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 };
 
 export default App;

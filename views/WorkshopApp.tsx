@@ -332,39 +332,7 @@ const WorkshopApp: React.FC<WorkshopAppProps> = ({ onBack }) => {
   // 3. View Dashboard Admin
   if (view === 'admin') {
       return (
-          <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
-              
-              {/* DELETE CONFIRMATION MODAL (NOW INCLUDED IN ADMIN VIEW) */}
-              {deleteModal.isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-slide-down">
-                        <div className="text-center">
-                            <div className="w-14 h-14 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <AlertTriangle size={28} />
-                            </div>
-                            <h3 className="text-lg font-bold text-slate-900 mb-2">Hapus Peserta?</h3>
-                            <p className="text-slate-500 text-sm mb-6">
-                                Apakah Anda yakin ingin menghapus data ini? Tindakan ini tidak dapat dibatalkan.
-                            </p>
-                            <div className="flex gap-3 justify-center">
-                                <button 
-                                    onClick={() => setDeleteModal({isOpen: false, id: null})}
-                                    className="px-5 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors"
-                                >
-                                    Batal
-                                </button>
-                                <button 
-                                    onClick={confirmDelete}
-                                    className="px-5 py-2.5 bg-red-500 text-white rounded-xl font-bold text-sm hover:bg-red-600 transition-colors shadow-lg shadow-red-200"
-                                >
-                                    Ya, Hapus
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-              )}
-
+          <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
               {/* Header Admin */}
               <div className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20">
                   <div className="flex items-center gap-3">

@@ -204,10 +204,24 @@ try {
             break;
         case 'monev_create_survey':
             $data = $jsonInput['data'] ?? $jsonInput;
+            
+            // Validation
+            if (!isset($data['id']) || !isset($data['title'])) {
+                jsonResponse(["status" => "error", "message" => "Missing required fields"], 400);
+            }
+
             $sid = $data['id'];
             $pdo->beginTransaction();
             $stmt = $pdo->prepare("INSERT INTO monev_surveys (id, title, description, startDate, endDate, isActive) VALUES (?,?,?,?,?,?)");
-            $stmt->execute([$sid, $data['title'], $data['description'], $data['startDate'], $data['endDate'], 1]);
+            $stmt->execute([
+                $sid, 
+                $data['title'], 
+                $data['description'] ?? '', 
+                $data['startDate'] ?? date('Y-m-d'), 
+                $data['endDate'] ?? date('Y-m-d'), 
+                1
+            ]);
+            
             if (isset($data['questions']) && is_array($data['questions'])) {
                 $qStmt = $pdo->prepare("INSERT INTO monev_questions (id, surveyId, text, type, options, config, orderNum) VALUES (?,?,?,?,?,?,?)");
                 $idx = 0;
@@ -339,10 +353,23 @@ try {
 
         case 'student_create_survey':
             $data = $jsonInput['data'] ?? $jsonInput;
+            
+            // Validation
+            if (!isset($data['id']) || !isset($data['title'])) {
+                jsonResponse(["status" => "error", "message" => "Missing required fields"], 400);
+            }
+
             $sid = $data['id'];
             $pdo->beginTransaction();
             $stmt = $pdo->prepare("INSERT INTO student_surveys (id, title, description, startDate, endDate, isActive) VALUES (?,?,?,?,?,?)");
-            $stmt->execute([$sid, $data['title'], $data['description'], $data['startDate'], $data['endDate'], 1]);
+            $stmt->execute([
+                $sid, 
+                $data['title'], 
+                $data['description'] ?? '', 
+                $data['startDate'] ?? date('Y-m-d'), 
+                $data['endDate'] ?? date('Y-m-d'), 
+                1
+            ]);
             
             if (isset($data['questions']) && is_array($data['questions'])) {
                 $qStmt = $pdo->prepare("INSERT INTO student_questions (id, surveyId, text, type, options, config, orderNum) VALUES (?,?,?,?,?,?,?)");
@@ -444,10 +471,45 @@ try {
             jsonResponse($stmt->fetchAll());
             break;
 
-        // --- 5. PORTAL APPS (Custom Links) ---
-        case 'fetch_portal_apps':
+        // --- 5. PORTAL APPS (Custom Links & Config) ---
+        case 'fetch_portal_config':
+            // 1. Get Custom Apps
             $stmt = $pdo->query("SELECT * FROM portal_apps ORDER BY createdAt ASC");
-            jsonResponse($stmt->fetchAll());
+            $customApps = $stmt->fetchAll();
+            foreach($customApps as &$app) $app['isActive'] = (bool)$app['isActive'];
+
+            // 2. Get Disabled Default Apps from Settings
+            $stmt = $pdo->prepare("SELECT value FROM settings WHERE `key` = ?");
+            $stmt->execute(['disabled_default_apps']);
+            $row = $stmt->fetch();
+            $disabledDefaults = $row ? json_decode($row['value'], true) : [];
+
+            jsonResponse([
+                'customApps' => $customApps,
+                'disabledDefaults' => $disabledDefaults ?: []
+            ]);
+            break;
+
+        case 'toggle_custom_app':
+            // Update portal_apps table
+            $id = $jsonInput['id'];
+            $isActive = $jsonInput['isActive'] ? 1 : 0;
+            $stmt = $pdo->prepare("UPDATE portal_apps SET isActive = ? WHERE id = ?");
+            $stmt->execute([$isActive, $id]);
+            jsonResponse(["status" => "success"]);
+            break;
+
+        case 'save_disabled_defaults':
+            // Update settings table
+            $disabledIds = $jsonInput['disabledIds']; // Array of strings
+            $value = json_encode($disabledIds);
+            $key = 'disabled_default_apps';
+            
+            $stmt = $pdo->prepare("INSERT INTO settings (id, `key`, `value`) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `value` = ?");
+            // use a fixed ID for this setting or auto-gen
+            $settingId = 'set_disabled_defaults'; 
+            $stmt->execute([$settingId, $key, $value, $value]);
+            jsonResponse(["status" => "success"]);
             break;
 
         // --- 6. CUSTOM ACTIONS ---
