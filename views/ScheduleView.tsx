@@ -765,6 +765,29 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({
               </select>
           </div>
 
+          {/* EXPORT BUTTON */}
+          <button
+            onClick={exportScheduleExcel}
+            className="flex items-center gap-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 px-4 py-2.5 rounded-xl border border-emerald-200 font-bold text-sm transition-all active:scale-95 h-[46px]"
+            title="Export Excel"
+          >
+            <FileSpreadsheet size={18} /> <span className="hidden sm:inline">Export</span>
+          </button>
+
+          {/* IMPORT BUTTON */}
+          {onImportSchedule && (
+            <>
+                <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".xlsx, .xls" className="hidden" />
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 px-4 py-2.5 rounded-xl border border-indigo-200 font-bold text-sm transition-all active:scale-95 h-[46px]"
+                    title="Import Excel"
+                >
+                    <Upload size={18} /> <span className="hidden sm:inline">Import</span>
+                </button>
+            </>
+          )}
+
           {/* GLOBAL LOCK BUTTON */}
           {onEditSchedule && schedule.length > 0 && (
               <button 
