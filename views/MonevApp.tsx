@@ -91,7 +91,8 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     try {
       // Pastikan NIP bersih dari spasi untuk query yang akurat
       const cleanNip = nip.trim(); 
-      const res = await fetch(`${API_URL}?action=monev_surveys&nip=${cleanNip}&admin=${adminMode}`);
+      // TARGET: LECTURER
+      const res = await fetch(`${API_URL}?action=monev_surveys&target=lecturer&nip=${cleanNip}&admin=${adminMode}`);
       const data = await res.json();
       // Ensure data is an array
       if (Array.isArray(data)) {
@@ -350,6 +351,7 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     const payload = {
         ...newSurvey,
         id: `sur-${Date.now()}`,
+        target: 'lecturer', // EXPLICIT TARGET
         questions: newQuestions,
         allowedNips: Array.from(selectedNips)
     };
@@ -397,7 +399,6 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
   };
 
   if (view === 'login') {
-    // ... (Login view code remains the same)
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         {renderNotification()}
@@ -442,7 +443,6 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                                     value={nip}
                                     onChange={e => {
                                         setNip(e.target.value);
-                                        // Reset verification if changed
                                         if (isVerified) {
                                             setIsVerified(false);
                                             setVerifiedData(null);
@@ -527,14 +527,13 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
     );
   }
 
-  // ... (dashboard_lecturer & fill_survey views remain the same)
+  // ... (dashboard_lecturer & fill_survey views)
   if (view === 'dashboard_lecturer') {
-      // ... (code omitted for brevity, logic unchanged from previous revision)
       return (
           <div className="min-h-screen bg-[#FDFBF7] p-6">
               {renderNotification()}
               <div className="max-w-4xl mx-auto">
-                  <header className="flex justify-between items-center mb-8">
+                  <header className="flex flex-row justify-between items-center mb-8">
                       <div>
                           <h1 className="text-2xl font-bold text-[#003B73]">Kuesioner Tersedia</h1>
                           <p className="text-slate-500 text-sm">Daftar survei Monev yang perlu Anda isi.</p>
@@ -542,13 +541,13 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                       <button onClick={onBack} className="p-2 bg-white rounded-lg border hover:bg-slate-50"><ArrowLeft size={20}/></button>
                   </header>
 
-                  <div className="grid gap-4">
+                  <div className="grid grid-cols-2 gap-4">
                       {Array.isArray(surveys) && surveys.length === 0 ? (
-                          <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-300">
+                          <div className="col-span-2 p-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-300">
                               Belum ada kuesioner aktif untuk Anda.
                           </div>
                       ) : Array.isArray(surveys) && surveys.map(s => (
-                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-row justify-between items-center gap-4">
                               <div className="flex-1">
                                   <h3 className="font-bold text-lg text-slate-800">{s.title}</h3>
                                   <p className="text-slate-500 text-sm mb-2">{s.description}</p>
@@ -575,8 +574,11 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
       );
   }
 
+  // ... (Sisa kode sama, hanya perlu memastikan view_results dan lainnya tidak diubah jika tidak perlu)
+  // ... (Gunakan versi yang sudah ada untuk fill_survey, dashboard_admin, create_survey, view_results)
+  // ... (Hanya ganti pemanggilan API yang relevan jika ada yang kurang)
+
   if (view === 'fill_survey') {
-      // ... (code omitted for brevity, logic unchanged from previous revision)
       return (
           <div className="min-h-screen bg-[#FDFBF7] p-6 relative">
               {renderNotification()}
@@ -698,7 +700,8 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                       </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {/* GRID SYSTEM: Force 3 Columns to mimic PC view on mobile due to fixed viewport */}
+                  <div className="grid grid-cols-3 gap-6">
                       {Array.isArray(surveys) && surveys.map(s => (
                           <div key={s.id} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group hover:border-blue-300 transition-all">
                               <div className="flex justify-between items-start mb-4">
@@ -739,6 +742,9 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
       );
   }
 
+  // Create Survey & Results View (sama persis dengan yang sebelumnya, hanya pastikan saveSurvey menargetkan 'lecturer' secara eksplisit di file backend atau frontend logic jika diperlukan, tapi backend defaultnya 'lecturer' jadi aman. Untuk student kita buat baru.)
+  // (Potongan kode create_survey dan view_results sama dengan revisi sebelumnya)
+  
   // Create Survey & Results View
   if (view === 'create_survey') {
       return (
@@ -914,7 +920,7 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
       );
   }
 
-  // Admin Results View
+  // Admin Results View (REUSED from previous)
   if (view === 'view_results' && surveyResults) {
       return (
           <div className="min-h-screen bg-slate-50 p-8">
@@ -923,16 +929,19 @@ const MonevApp: React.FC<MonevAppProps> = ({ onBack }) => {
                   <h1 className="text-2xl font-bold text-slate-800 mb-1">{activeSurvey?.title}</h1>
                   <p className="text-slate-500 mb-6">Total Responden: <span className="font-bold text-blue-600">{surveyResults.totalRespondents}</span></p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* GRID SYSTEM: Force 2 Columns on all screens */}
+                  <div className="grid grid-cols-2 gap-6">
                       {surveyResults.results && Array.isArray(surveyResults.results) && surveyResults.results.map((res: any, idx: number) => {
                           const { question, data = [], details = [] } = res;
                           const safeData = Array.isArray(data) ? data : [];
                           const safeDetails = Array.isArray(details) ? details : [];
                           
                           // Simple Chart Rendering Logic (CSS Based)
-                          const total = safeData.reduce((acc:any, curr:any) => acc + parseInt(curr.count || 0), 0);
+                          const total = safeData.reduce((acc:any, curr:any) => acc + parseInt(String(curr?.count || 0)), 0);
                           const chartType = question.config?.chartType || 'bar';
                           
+                          if (!res || !res.question) return null;
+
                           return (
                               <div key={idx} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm break-inside-avoid">
                                   <h3 className="font-bold text-slate-800 mb-4 text-sm">{question.text}</h3>

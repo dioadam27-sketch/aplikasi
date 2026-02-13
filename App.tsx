@@ -6,6 +6,7 @@ import AssetApp from './views/AssetApp';
 import HRApp from './views/HRApp';
 import AcademicApp from './views/AcademicApp';
 import OfficeApp from './views/OfficeApp';
+import WorkshopApp from './views/WorkshopApp';
 
 const App: React.FC = () => {
   const [currentApp, setCurrentApp] = useState<string | null>(null);
@@ -31,6 +32,8 @@ const App: React.FC = () => {
       return <AcademicApp onBack={goBack} />;
     case 'office':
       return <OfficeApp onBack={goBack} />;
+    case 'workshop':
+      return <WorkshopApp onBack={goBack} />;
     default:
       return <PortalLanding onSelectApp={setCurrentApp} />;
   }

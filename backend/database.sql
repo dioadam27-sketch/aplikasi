@@ -1,5 +1,5 @@
 
--- DATABASE TERPUSAT PDB APPS (SIMPDB, HELPDESK, ASSET, MONEV)
+-- DATABASE TERPUSAT PDB APPS (SIMPDB, HELPDESK, ASSET, MONEV, STUDENT SURVEY)
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS `bookings` (
     `roomId` VARCHAR(50) NOT NULL,
     `studentName` VARCHAR(255),
     `studentNim` VARCHAR(50),
-    `pdbClass` VARCHAR(255), -- Updated to 255 chars for free text input
+    `pdbClass` VARCHAR(255),
     `subject` VARCHAR(255),
     `contact` VARCHAR(50),
     `date` VARCHAR(20),
@@ -126,13 +126,14 @@ CREATE TABLE IF NOT EXISTS `helpdesk_complaints` (
 );
 
 -- ==========================================
--- 5. MONEV (Kuesioner PDB)
+-- 5. MONEV (Kuesioner Dosen)
 -- ==========================================
 
 CREATE TABLE IF NOT EXISTS `monev_surveys` (
     `id` VARCHAR(50) PRIMARY KEY,
     `title` VARCHAR(255) NOT NULL,
     `description` TEXT,
+    `target` VARCHAR(20) DEFAULT 'lecturer',
     `startDate` DATE,
     `endDate` DATE,
     `isActive` TINYINT(1) DEFAULT 1,
@@ -143,7 +144,7 @@ CREATE TABLE IF NOT EXISTS `monev_questions` (
     `id` VARCHAR(50) PRIMARY KEY,
     `surveyId` VARCHAR(50),
     `text` TEXT NOT NULL,
-    `type` VARCHAR(20) NOT NULL, -- text, choice, likert
+    `type` VARCHAR(20) NOT NULL,
     `options` TEXT, -- JSON Array
     `config` TEXT, -- JSON Object
     `orderNum` INT DEFAULT 0
@@ -171,7 +172,60 @@ CREATE TABLE IF NOT EXISTS `monev_answers` (
 );
 
 -- ==========================================
--- 6. SYSTEM SETTINGS
+-- 6. STUDENT SURVEY (Kuesioner Mahasiswa)
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS `student_surveys` (
+    `id` VARCHAR(50) PRIMARY KEY,
+    `title` VARCHAR(255) NOT NULL,
+    `description` TEXT,
+    `startDate` DATE,
+    `endDate` DATE,
+    `isActive` TINYINT(1) DEFAULT 1,
+    `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS `student_questions` (
+    `id` VARCHAR(50) PRIMARY KEY,
+    `surveyId` VARCHAR(50),
+    `text` TEXT NOT NULL,
+    `type` VARCHAR(20) NOT NULL,
+    `options` TEXT, -- JSON Array
+    `config` TEXT, -- JSON Object
+    `orderNum` INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS `student_responses` (
+    `id` VARCHAR(50) PRIMARY KEY,
+    `surveyId` VARCHAR(50),
+    `respondentNim` VARCHAR(50), -- NIM Mahasiswa
+    `submittedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS `student_answers` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `responseId` VARCHAR(50),
+    `questionId` VARCHAR(50),
+    `value` TEXT
+);
+
+-- ==========================================
+-- 7. WORKSHOP PDB (Pelatihan Dosen)
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS `workshop_participants` (
+  `id` VARCHAR(50) PRIMARY KEY,
+  `name` VARCHAR(255) NOT NULL,
+  `nip` VARCHAR(50) NOT NULL,
+  `faculty` VARCHAR(100),
+  `topic` VARCHAR(50),
+  `sessionDate` DATE,
+  `status` VARCHAR(20) DEFAULT 'Terdaftar',
+  `createdAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
+-- 8. SYSTEM SETTINGS & CUSTOM APPS
 -- ==========================================
 CREATE TABLE IF NOT EXISTS `settings` (
     `id` VARCHAR(50) PRIMARY KEY,
@@ -179,5 +233,14 @@ CREATE TABLE IF NOT EXISTS `settings` (
     `value` TEXT
 );
 
+CREATE TABLE IF NOT EXISTS `portal_apps` (
+  `id` VARCHAR(50) PRIMARY KEY,
+  `name` VARCHAR(100) NOT NULL,
+  `description` TEXT,
+  `url` TEXT NOT NULL,
+  `color` VARCHAR(50) DEFAULT 'bg-slate-600',
+  `isActive` TINYINT(1) DEFAULT 1,
+  `createdAt` BIGINT
+);
 
 COMMIT;
