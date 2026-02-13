@@ -33,8 +33,13 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
 
   // --- STATE ---
   const [disabledApps, setDisabledApps] = useState<string[]>(() => {
-    const saved = localStorage.getItem('pdb_portal_disabled_apps');
-    return saved ? JSON.parse(saved) : [];
+    try {
+        const saved = localStorage.getItem('pdb_portal_disabled_apps');
+        return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+        console.error("Error parsing disabled apps settings", e);
+        return [];
+    }
   });
   
   const [customApps, setCustomApps] = useState<CustomApp[]>([]);
