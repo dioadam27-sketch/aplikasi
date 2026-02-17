@@ -55,14 +55,19 @@ const handleResponse = async (response: Response) => {
         if (text.includes("<br />") || text.includes("Fatal error") || text.includes("Warning")) {
             throw new Error("Server Error (PHP): " + text.replace(/<[^>]*>?/gm, '').substring(0, 100));
         }
-        throw new Error("Respon server tidak valid: " + text.substring(0, 50));
+        if (response.status === 404) throw new Error("API URL tidak ditemukan (404). Periksa konfigurasi.");
+        if (response.status >= 500) throw new Error("Server Internal Error (500).");
+        throw new Error("Respon server tidak valid (Bukan JSON). Cek console.");
     }
 };
 
 const fetchWithRetry = async (url: string, options: RequestInit, retries = 1): Promise<Response> => {
     try {
         const response = await fetch(url, options);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        // Don't throw immediately for 404/500 so handleResponse can parse potentially useful HTML error or throw specific message
+        if (!response.ok && response.status !== 404 && response.status < 500) { 
+             throw new Error(`HTTP error! status: ${response.status}`);
+        }
         return response;
     } catch (err) {
         if (retries > 0) {
@@ -150,7 +155,7 @@ export const uploadToDrive = async (file: File, metadata: Partial<ArchiveDocumen
   } catch (error) {
     console.error("Hybrid Upload Error:", error);
     if (error instanceof TypeError && error.message === "Failed to fetch") {
-        throw new Error("Koneksi terputus.");
+        throw new Error("Koneksi terputus. Cek internet atau URL API.");
     }
     throw error;
   }
@@ -392,7 +397,7 @@ export const fetchAllData = async (): Promise<FetchResponse> => {
         }
     } catch (error) {
         console.error("Fetch Error:", error);
-        throw new Error("Gagal mengambil data. Cek koneksi atau URL API.");
+        throw error; // Rethrow to let UI handle it
     }
 };
 

@@ -1,6 +1,7 @@
 <?php
 /**
  * API Backend Native cPanel untuk Repo PKKII (Metadata Only)
+ * Updated: Fix CORS & Null Safety
  */
 
 // --- 1. KONFIGURASI DATABASE ---
@@ -9,11 +10,14 @@ define('DB_USER', 'pkkiipendidikanu_dioarsip');
 define('DB_PASS', '@Dioadam27');      
 define('DB_NAME', 'pkkiipendidikanu_ruangpdb'); 
 
-// --- 2. CORS & HEADERS ---
+// --- 2. CORS & HEADERS (DIPERBAIKI) ---
+// Izinkan semua origin jika HTTP_ORIGIN tidak terdeteksi (untuk tools/debug)
 if (isset($_SERVER['HTTP_ORIGIN'])) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header('Access-Control-Allow-Credentials: true');
-    header('Access-Control-Max-Age: 86400');    // cache for 1 day
+    header('Access-Control-Max-Age: 86400');
+} else {
+    header("Access-Control-Allow-Origin: *");
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
@@ -26,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
 
 header("Content-Type: application/json; charset=UTF-8");
 
+// Matikan display error agar tidak merusak format JSON
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
@@ -58,8 +63,13 @@ class ArchiveAPI {
             if (!$input) $input = $_POST;
 
             if (empty($input) && json_last_error() !== JSON_ERROR_NONE) {
-                 $this->response('error', 'Invalid JSON payload', 400);
+                 // Jangan exit, coba cek $_POST manual jika JSON gagal
+                 if(empty($_POST)) {
+                    $this->response('error', 'Invalid JSON payload', 400);
+                 }
             }
+            
+            // Handle case where input is empty but method is POST (upload without body?)
             if (empty($input)) {
                 $this->response('error', 'No data received', 400);
             }
@@ -95,7 +105,7 @@ class ArchiveAPI {
             case 'move_archive': 
                 $this->moveArchive($data);
                 break;
-            case 'rename_archive': // NEW ACTION
+            case 'rename_archive': 
                 $this->renameArchive($data);
                 break;
             default:
@@ -103,26 +113,35 @@ class ArchiveAPI {
         }
     }
 
-    // --- GET DATA ---
+    // --- GET DATA (SANITIZED) ---
     private function getAllData() {
         try {
-            // Gunakan SELECT * agar aman jika kolom 'visibility' belum ada di database
+            // Gunakan SELECT * agar aman
             $stmt = $this->pdo->query("SELECT * FROM archives ORDER BY created_at DESC");
             $archives = [];
             while ($row = $stmt->fetch()) {
+                // SANITASI DATA: Memastikan tidak ada nilai NULL yang dikirim ke Frontend
+                // Type casting (string) sangat penting di sini
+                
+                $tagsRaw = $row['tags'] ?? '';
+                $tagsArray = [];
+                if (!empty($tagsRaw) && is_string($tagsRaw)) {
+                    $tagsArray = explode(", ", $tagsRaw);
+                }
+                
                 $archives[] = [
-                    "id" => $row['id'],
-                    "nomorDokumen" => $row['nomor_dokumen'],
-                    "judul" => $row['judul'],
-                    "deskripsi" => $row['deskripsi'],
-                    "kategori" => $row['kategori'],
-                    "tahun" => $row['tahun'],
-                    "tags" => $row['tags'] ? explode(", ", $row['tags']) : [],
-                    "fileUrl" => $row['file_url'],
-                    "fileSize" => $row['file_size'],
-                    "tanggalUpload" => $row['created_at'],
-                    "folderId" => $row['folder_id'],
-                    "visibility" => $row['visibility'] ?? 'public' // Fallback ke public jika kolom tidak ada
+                    "id" => (string)$row['id'],
+                    "nomorDokumen" => !empty($row['nomor_dokumen']) ? (string)$row['nomor_dokumen'] : '-',
+                    "judul" => !empty($row['judul']) ? (string)$row['judul'] : 'Tanpa Judul',
+                    "deskripsi" => (string)($row['deskripsi'] ?? ''),
+                    "kategori" => (string)($row['kategori'] ?? 'Lainnya'),
+                    "tahun" => (string)($row['tahun'] ?? date('Y')),
+                    "tags" => $tagsArray,
+                    "fileUrl" => (string)($row['file_url'] ?? ''),
+                    "fileSize" => (string)($row['file_size'] ?? ''),
+                    "tanggalUpload" => (string)($row['created_at'] ?? ''),
+                    "folderId" => (string)($row['folder_id'] ?? ''),
+                    "visibility" => (string)($row['visibility'] ?? 'public')
                 ];
             }
 
@@ -131,10 +150,10 @@ class ArchiveAPI {
             $folders = [];
             while ($row = $stmtFolder->fetch()) {
                 $folders[] = [
-                    "id" => $row['id'],
-                    "label" => $row['label'],
-                    "parentId" => $row['parent_id'],
-                    "visibility" => $row['visibility'] ?? 'public'
+                    "id" => (string)$row['id'],
+                    "label" => (string)($row['label'] ?? 'Folder'),
+                    "parentId" => !empty($row['parent_id']) ? (string)$row['parent_id'] : null,
+                    "visibility" => (string)($row['visibility'] ?? 'public')
                 ];
             }
 
@@ -155,7 +174,10 @@ class ArchiveAPI {
         }
 
         $id = uniqid('doc_');
-        $tags = is_array($data['tags']) ? implode(", ", $data['tags']) : $data['tags'];
+        // Pastikan tags array sebelum implode
+        $tagsData = $data['tags'] ?? [];
+        $tags = is_array($tagsData) ? implode(", ", $tagsData) : (string)$tagsData;
+        
         $driveId = $data['driveId'] ?? '';
         $folderId = !empty($data['folderId']) ? $data['folderId'] : null;
         $visibility = $data['visibility'] ?? 'public';
@@ -186,14 +208,14 @@ class ArchiveAPI {
 
         } catch (PDOException $e) {
             // ERROR 1054 = Unknown column (jika kolom visibility belum dibuat)
-            if ($e->errorInfo[1] == 1054) {
+            if (isset($e->errorInfo[1]) && $e->errorInfo[1] == 1054) {
                 try {
                     // COBA 2: Insert TANPA visibility (Fallback)
                     $sqlFallback = "INSERT INTO archives (id, nomor_dokumen, judul, deskripsi, kategori, tahun, tags, file_url, file_path, file_size, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                     $stmt = $this->pdo->prepare($sqlFallback);
                     $stmt->execute($params);
                     
-                    $this->response('success', 'Metadata disimpan (Mode Kompatibilitas: Visibility diabaikan)', 200, ['id' => $id]);
+                    $this->response('success', 'Metadata disimpan (Mode Kompatibilitas)', 200, ['id' => $id]);
                 } catch (Exception $ex) {
                     $this->response('error', "Database Error (Fallback): " . $ex->getMessage(), 500);
                 }
@@ -203,7 +225,7 @@ class ArchiveAPI {
         }
     }
 
-    // --- MANAGE FOLDER (Dengan Fallback) ---
+    // --- MANAGE FOLDER ---
     private function createFolder($data) {
         $params = [
             $data['id'],
@@ -212,7 +234,6 @@ class ArchiveAPI {
         ];
 
         try {
-            // COBA 1: Dengan Visibility
             $stmt = $this->pdo->prepare("INSERT INTO folders (id, label, parent_id, visibility) VALUES (?, ?, ?, ?)");
             $fullParams = $params;
             $fullParams[] = $data['visibility'] ?? 'public';
@@ -220,10 +241,8 @@ class ArchiveAPI {
             $this->response('success', 'Folder created');
 
         } catch (PDOException $e) {
-             // ERROR 1054 = Unknown column
-             if ($e->errorInfo[1] == 1054) {
+             if (isset($e->errorInfo[1]) && $e->errorInfo[1] == 1054) {
                 try {
-                    // COBA 2: Tanpa Visibility
                     $stmt = $this->pdo->prepare("INSERT INTO folders (id, label, parent_id) VALUES (?, ?, ?)");
                     $stmt->execute($params);
                     $this->response('success', 'Folder created (Compatibility Mode)');
@@ -262,8 +281,7 @@ class ArchiveAPI {
             $stmt->execute([$newVisibility, $id]);
             $this->response('success', 'Visibility updated');
         } catch (PDOException $e) {
-             // Jika error karena kolom tidak ada, kita anggap "sukses" secara UI agar tidak error, tapi beri pesan
-             if ($e->errorInfo[1] == 1054) {
+             if (isset($e->errorInfo[1]) && $e->errorInfo[1] == 1054) {
                  $this->response('success', 'Simulated update (Database column missing)');
              }
              $this->response('error', $e->getMessage(), 500);
@@ -334,7 +352,8 @@ class ArchiveAPI {
         http_response_code($code);
         $res = ['status' => $status, 'message' => $message];
         if ($data) $res['data'] = $data;
-        echo json_encode($res, JSON_NUMERIC_CHECK);
+        // Gunakan flag JSON_INVALID_UTF8_IGNORE untuk mencegah json_encode gagal jika ada karakter aneh di DB
+        echo json_encode($res, JSON_INVALID_UTF8_IGNORE);
         exit();
     }
 }

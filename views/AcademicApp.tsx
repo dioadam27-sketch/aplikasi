@@ -429,14 +429,18 @@ const AcademicApp = ({ onBack }: { onBack: () => void }) => {
         }
     }
 
-    // Search
+    // Search (Updated with robust safety checks)
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        data = data.filter(d => 
-            d.judul.toLowerCase().includes(q) || 
-            d.nomorDokumen.toLowerCase().includes(q) ||
-            (d.tags && d.tags.some(t => t.toLowerCase().includes(q)))
-        );
+        data = data.filter(d => {
+            const judul = d.judul ? String(d.judul).toLowerCase() : '';
+            const nomor = d.nomorDokumen ? String(d.nomorDokumen).toLowerCase() : '';
+            const tags = Array.isArray(d.tags) ? d.tags : [];
+            
+            return judul.includes(q) || 
+                   nomor.includes(q) ||
+                   tags.some(t => t && String(t).toLowerCase().includes(q));
+        });
     }
 
     return data;
@@ -754,7 +758,7 @@ const AcademicApp = ({ onBack }: { onBack: () => void }) => {
                                                     {doc.judul}
                                                 </h3>
                                                 <div className="flex flex-wrap gap-1 mb-4">
-                                                    {doc.tags.slice(0, 2).map((tag, idx) => (
+                                                    {Array.isArray(doc.tags) && doc.tags.slice(0, 2).map((tag, idx) => (
                                                         <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 border border-gray-200 dark:border-zinc-700">
                                                             <Tag size={10} className="mr-1"/> {tag}
                                                         </span>

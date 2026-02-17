@@ -80,6 +80,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
       })),
       ...customApps.map(app => ({
           ...app,
+          desc: app.description,
           icon: Globe, // Default icon for external apps
           text: app.color.replace('bg-', 'text-'), // Simple heuristic
           isExternal: true,
@@ -161,7 +162,7 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
       const payload = {
           id: `ext-${Date.now()}`,
           ...newApp,
-          isActive: 1,
+          isActive: true,
           createdAt: Date.now()
       };
 
@@ -172,12 +173,12 @@ const PortalLanding: React.FC<PortalLandingProps> = ({ onSelectApp }) => {
               body: JSON.stringify({
                   table: 'portal_apps',
                   action: 'add',
-                  data: payload
+                  data: { ...payload, isActive: 1 }
               })
           });
           
           if (res.ok) {
-              setCustomApps([...customApps, payload]); // isActive defaults to 1/true
+              setCustomApps([...customApps, payload as unknown as CustomApp]); // isActive defaults to true
               setNewApp({ name: '', description: '', url: '', color: 'bg-slate-600' });
           } else {
               alert("Gagal menyimpan aplikasi.");
